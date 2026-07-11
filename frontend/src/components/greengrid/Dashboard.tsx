@@ -91,7 +91,7 @@ function truncateAddress(address: string) {
 export function Dashboard() {
   const [minPrice, setMinPrice] = useState<number[]>([1.8]);
   const [autoTrade, setAutoTrade] = useState(true);
-  const [feed, setFeed] = useState<Tx[]>(seedTx);
+  const [feed, setFeed] = useState<Tx[]>([]);
   
   // Web3 states
   const [account, setAccount] = useState<string | null>(null);
@@ -172,6 +172,41 @@ export function Dashboard() {
     setLoadingListings(true);
     const chainListings = await getListingsFromChain();
     setListings(chainListings);
+    
+    // Map actual settled listings to feed
+    const settledListings = chainListings.filter(l => l.isSettled);
+    const mappedFeed: Tx[] = settledListings.map(l => {
+      const isSeller = activeAddr && l.seller.toLowerCase() === activeAddr.toLowerCase();
+      const isBuyer = activeAddr && l.buyer.toLowerCase() === activeAddr.toLowerCase();
+      
+      // Calculate ago string
+      let agoStr = "completed";
+      if (l.matchedAt > 0) {
+        const diffSeconds = Math.floor(Date.now() / 1000) - l.matchedAt;
+        if (diffSeconds < 60) agoStr = "just now";
+        else if (diffSeconds < 3600) agoStr = `${Math.floor(diffSeconds / 60)}m ago`;
+        else if (diffSeconds < 86400) agoStr = `${Math.floor(diffSeconds / 3600)}h ago`;
+        else agoStr = `${Math.floor(diffSeconds / 86400)}d ago`;
+      }
+      
+      return {
+        id: `chain-${l.id}`,
+        kind: isBuyer ? "buy" : "sell",
+        kwh: parseFloat(l.amount),
+        gc: parseFloat(l.amount),
+        addr: isSeller ? truncateAddress(l.buyer) : truncateAddress(l.seller),
+        ago: agoStr
+      };
+    });
+    
+    // Sort by listing ID descending so newest settled are at the top
+    mappedFeed.sort((a, b) => {
+      const idA = parseInt(a.id.replace("chain-", ""));
+      const idB = parseInt(b.id.replace("chain-", ""));
+      return idB - idA;
+    });
+    
+    setFeed(mappedFeed);
     setLoadingListings(false);
   };
 
@@ -201,26 +236,6 @@ export function Dashboard() {
     
     return () => clearInterval(interval);
   }, [account]);
-
-  // Simulate a rolling ledger (fallback / visual effect)
-  useEffect(() => {
-    const id = setInterval(() => {
-      const addrs = ["0x2D001...5dC", "0xd3031...a67", "0x89F...7C2", "0x41A...9E8", "0xB0D...1F4"];
-      const kwh = +(0.3 + Math.random() * 4.2).toFixed(1);
-      const gc = +(kwh * (1.7 + Math.random() * 0.6)).toFixed(1);
-      const kind: "sell" | "buy" = Math.random() > 0.25 ? "sell" : "buy";
-      const next: Tx = {
-        id: Math.random().toString(16).slice(2, 8),
-        kind,
-        kwh,
-        gc,
-        addr: addrs[Math.floor(Math.random() * addrs.length)],
-        ago: "just now",
-      };
-      setFeed((f) => [next, ...f].slice(0, 6));
-    }, 8000);
-    return () => clearInterval(id);
-  }, []);
 
   return (
     <div className="min-h-screen text-foreground">
@@ -878,42 +893,50 @@ function Ledger({ feed }: { feed: Tx[] }) {
         </div>
       </div>
 
-      <div className="mt-4 flex-1 space-y-2 overflow-hidden">
-        {feed.map((tx) => (
-          <div
-            key={tx.id}
-            className="group flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-3 transition"
-          >
-            <div
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
-                tx.kind === "sell"
-                  ? "bg-[var(--neon-green)]/12 text-[var(--neon-green)]"
-                  : "bg-[var(--neon-cyan)]/12 text-[var(--neon-cyan)]"
-              }`}
-            >
-              <Zap className="h-4 w-4" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-1.5 text-sm">
-                <span className={tx.kind === "sell" ? "text-glow-green font-semibold" : "text-glow-cyan font-semibold"}>
-                  {tx.kind === "sell" ? "Sold" : "Bought"}
-                </span>
-                <span className="font-[JetBrains_Mono]">{tx.kwh} kWh</span>
-                <span className="text-muted-foreground">·</span>
-                <span className="font-[JetBrains_Mono] text-xs text-muted-foreground truncate">
-                  {tx.addr}
-                </span>
-              </div>
-              <div className="mt-0.5 flex items-center justify-between text-[11px] text-muted-foreground">
-                <span>{tx.ago}</span>
-                <span className="font-[JetBrains_Mono] text-foreground/80">
-                  {tx.kind === "sell" ? "+" : "−"}
-                  {tx.gc} POL
-                </span>
-              </div>
-            </div>
+      <div className="mt-4 flex-1 space-y-2 overflow-hidden flex flex-col justify-center">
+        {feed.length === 0 ? (
+          <div className="flex flex-col items-center justify-center text-center p-5 text-muted-foreground text-sm my-auto">
+            <Zap className="h-8 w-8 text-muted-foreground/20 mb-2 animate-pulse" />
+            <p className="font-semibold text-foreground/75">No transactions completed yet</p>
+            <p className="text-xs text-muted-foreground/60 mt-1 max-w-[200px]">Complete a P2P trade delivery to see it logged here.</p>
           </div>
-        ))}
+        ) : (
+          feed.map((tx) => (
+            <div
+              key={tx.id}
+              className="group flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-3 transition"
+            >
+              <div
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                  tx.kind === "sell"
+                    ? "bg-[var(--neon-green)]/12 text-[var(--neon-green)]"
+                    : "bg-[var(--neon-cyan)]/12 text-[var(--neon-cyan)]"
+                }`}
+              >
+                <Zap className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-1.5 text-sm">
+                  <span className={tx.kind === "sell" ? "text-glow-green font-semibold" : "text-glow-cyan font-semibold"}>
+                    {tx.kind === "sell" ? "Sold" : "Bought"}
+                  </span>
+                  <span className="font-[JetBrains_Mono]">{tx.kwh} kWh</span>
+                  <span className="text-muted-foreground">·</span>
+                  <span className="font-[JetBrains_Mono] text-xs text-muted-foreground truncate">
+                    {tx.addr}
+                  </span>
+                </div>
+                <div className="mt-0.5 flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>{tx.ago}</span>
+                  <span className="font-[JetBrains_Mono] text-foreground/80">
+                    {tx.kind === "sell" ? "+" : "−"}
+                    {tx.gc} POL
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
