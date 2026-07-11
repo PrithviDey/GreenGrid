@@ -578,7 +578,7 @@ export function Dashboard() {
         
         {/* Wallet Mismatch Warning Banner */}
         {walletMismatch && (
-          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-[0_0_15px_rgba(239,68,68,0.15)] animate-pulse">
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400 flex flex-col lg:flex-row items-center justify-between gap-3 shadow-[0_0_15px_rgba(239,68,68,0.15)] animate-pulse">
             <div className="flex items-center gap-3">
               <ShieldCheck className="h-5 w-5 text-red-500 shrink-0" />
               <div>
@@ -588,8 +588,25 @@ export function Dashboard() {
                 </span>
               </div>
             </div>
-            <div className="text-xs font-medium bg-red-500/20 px-3 py-1.5 rounded-lg border border-red-500/30">
-              Please switch accounts in MetaMask
+            <div className="flex flex-wrap items-center gap-2">
+              <Button 
+                onClick={handleSwitchWallet}
+                className="text-xs font-semibold bg-red-500/20 px-3 py-1.5 rounded-lg border border-red-500/30 hover:bg-red-500/30 text-red-300 transition duration-150"
+              >
+                Switch Wallet
+              </Button>
+              <Button
+                onClick={() => {
+                  if (account) {
+                    localStorage.setItem(`greengrid_wallet_${currentUser}`, account);
+                    toast.success(`Successfully linked "${currentUser}" to wallet ${truncateAddress(account)}`);
+                    refreshState(account);
+                  }
+                }}
+                className="text-xs font-semibold bg-[var(--neon-green)]/15 px-3 py-1.5 rounded-lg border border-[var(--neon-green)]/35 hover:bg-[var(--neon-green)]/25 text-[var(--neon-green)] transition duration-150"
+              >
+                Relink Wallet
+              </Button>
             </div>
           </div>
         )}
