@@ -205,15 +205,95 @@ export function Dashboard() {
     
     setLoadingListings(true);
     const chainListings = await getListingsFromChain();
-    setListings(chainListings);
+
+    // Define mock listings under 0.005 POL per kWh for visual marketplace comparison
+    const mockListings: Listing[] = [
+      {
+        id: 101,
+        seller: "0x89F3119561E8D303C0D0aB1e57cFFd570245C7C2",
+        amount: "2.5",
+        pricePerToken: "0.0012",
+        buyer: "0x0000000000000000000000000000000000000000",
+        matchedAt: 0,
+        isActive: true,
+        isMatched: false,
+        isSettled: false
+      },
+      {
+        id: 102,
+        seller: "0x41A23e8f810Ac09d3031789A4096a5F69Ef27f51",
+        amount: "4.0",
+        pricePerToken: "0.0028",
+        buyer: "0x0000000000000000000000000000000000000000",
+        matchedAt: 0,
+        isActive: true,
+        isMatched: false,
+        isSettled: false
+      },
+      {
+        id: 103,
+        seller: "0xB0D31789A4096a5F69Ef27f5170dcBe43df2Fa67",
+        amount: "1.5",
+        pricePerToken: "0.0045",
+        buyer: "0x0000000000000000000000000000000000000000",
+        matchedAt: 0,
+        isActive: true,
+        isMatched: false,
+        isSettled: false
+      },
+      {
+        id: 104,
+        seller: "0x77EC104CA2Dc4813ED58CcCd678619E87C2d450b",
+        amount: "5.0",
+        pricePerToken: "0.0032",
+        buyer: "0x0000000000000000000000000000000000000000",
+        matchedAt: 0,
+        isActive: true,
+        isMatched: false,
+        isSettled: false
+      },
+      {
+        id: 105,
+        seller: "0x9E87C2d450b06FCcC77EC104CA2Dc4813ED58CcC",
+        amount: "3.2",
+        pricePerToken: "0.0050",
+        buyer: "0x0000000000000000000000000000000000000000",
+        matchedAt: 0,
+        isActive: true,
+        isMatched: false,
+        isSettled: false
+      }
+    ];
+
+    const purchasedMockIds = JSON.parse(localStorage.getItem("greengrid_purchased_mocks") || "[]");
+    const settledMockIds = JSON.parse(localStorage.getItem("greengrid_settled_mocks") || "[]");
+
+    // Process mocks with purchase and settlement flags
+    const processedMocks = mockListings.map(m => {
+      const isMatched = purchasedMockIds.includes(m.id);
+      const isSettled = settledMockIds.includes(m.id);
+      return {
+        ...m,
+        isMatched,
+        isSettled,
+        isActive: !isSettled,
+        buyer: isMatched ? (activeAddr || "0xd3031789A4096a5F69Ef27f5170dcBe43df2Fa67") : m.buyer,
+        matchedAt: isMatched ? 1783801112 : 0
+      };
+    });
+
+    // Show active and matched mocks in listings state
+    const activeOrMatchedMocks = processedMocks.filter(m => !m.isSettled);
+    setListings([...activeOrMatchedMocks, ...chainListings]);
     
-    // Map actual settled listings to feed
-    const settledListings = chainListings.filter(l => l.isSettled);
-    const mappedFeed: Tx[] = settledListings.map(l => {
+    // Map actual settled listings and settled mock listings to feed
+    const settledChainListings = chainListings.filter(l => l.isSettled);
+    const settledMocks = processedMocks.filter(m => m.isSettled);
+
+    const mappedChainFeed: Tx[] = settledChainListings.map(l => {
       const isSeller = activeAddr && l.seller.toLowerCase() === activeAddr.toLowerCase();
       const isBuyer = activeAddr && l.buyer.toLowerCase() === activeAddr.toLowerCase();
       
-      // Calculate ago string
       let agoStr = "completed";
       if (l.matchedAt > 0) {
         const diffSeconds = Math.floor(Date.now() / 1000) - l.matchedAt;
@@ -232,15 +312,29 @@ export function Dashboard() {
         ago: agoStr
       };
     });
+
+    const mappedMockFeed: Tx[] = settledMocks.map(m => {
+      const isSeller = activeAddr && m.seller.toLowerCase() === activeAddr.toLowerCase();
+      const isBuyer = activeAddr && m.buyer.toLowerCase() === activeAddr.toLowerCase();
+      return {
+        id: `mock-${m.id}`,
+        kind: isBuyer ? "buy" : "sell",
+        kwh: parseFloat(m.amount),
+        gc: parseFloat((parseFloat(m.amount) * parseFloat(m.pricePerToken)).toFixed(6)),
+        addr: isSeller ? truncateAddress(m.buyer) : truncateAddress(m.seller),
+        ago: "just now"
+      };
+    });
+
+    const combinedFeed = [...mappedMockFeed, ...mappedChainFeed];
     
-    // Sort by listing ID descending so newest settled are at the top
-    mappedFeed.sort((a, b) => {
-      const idA = parseInt(a.id.replace("chain-", ""));
-      const idB = parseInt(b.id.replace("chain-", ""));
-      return idB - idA;
+    // Sort combined feed by listing ID descending
+    combinedFeed.sort((a, b) => {
+      const getNum = (idStr: string) => parseInt(idStr.replace("chain-", "").replace("mock-", ""));
+      return getNum(b.id) - getNum(a.id);
     });
     
-    setFeed(mappedFeed);
+    setFeed(combinedFeed);
     setLoadingListings(false);
   };
 
@@ -1172,6 +1266,17 @@ function ActiveListings({
     
     setProcessingId(listingId);
     try {
+      if (listingId >= 101) {
+        toast.info("Sending payment deposit to escrow contract (Simulated)...");
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const purchasedMocks = JSON.parse(localStorage.getItem("greengrid_purchased_mocks") || "[]");
+        purchasedMocks.push(listingId);
+        localStorage.setItem("greengrid_purchased_mocks", JSON.stringify(purchasedMocks));
+        toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
+        onSuccess();
+        return;
+      }
+
       toast.info("Sending payment deposit to escrow contract via MetaMask...");
       const receipt = await buyEnergyListing(signer, listingId, totalCostMatic);
       toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
@@ -1188,6 +1293,17 @@ function ActiveListings({
     if (walletMismatch) return;
     setProcessingId(listingId);
     try {
+      if (listingId >= 101) {
+        toast.info("Invoking Backend Oracle to verify energy delivery (Simulated)...");
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const settledMocks = JSON.parse(localStorage.getItem("greengrid_settled_mocks") || "[]");
+        settledMocks.push(listingId);
+        localStorage.setItem("greengrid_settled_mocks", JSON.stringify(settledMocks));
+        toast.success("✔ Oracle Verified: Delivery confirmed, funds released to seller!");
+        onSuccess();
+        return;
+      }
+
       toast.info("Invoking Backend Oracle API to verify energy delivery...");
       const res = await settleListingViaOracle(listingId);
       toast.success(`✔ Oracle Verified: ${res.message}`);
@@ -1204,6 +1320,17 @@ function ActiveListings({
     if (walletMismatch) return;
     setProcessingId(listingId);
     try {
+      if (listingId >= 101) {
+        toast.info("Invoking Backend Oracle to cancel trade and trigger refunds (Simulated)...");
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const purchasedMocks = JSON.parse(localStorage.getItem("greengrid_purchased_mocks") || "[]");
+        const nextPurchased = purchasedMocks.filter((id: number) => id !== listingId);
+        localStorage.setItem("greengrid_purchased_mocks", JSON.stringify(nextPurchased));
+        toast.success("✔ Oracle Aborted: Payment refunded successfully.");
+        onSuccess();
+        return;
+      }
+
       toast.info("Invoking Backend Oracle API to cancel trade and trigger refunds...");
       const res = await abortListingViaOracle(listingId);
       toast.success(`✔ Oracle Aborted: ${res.message}`);

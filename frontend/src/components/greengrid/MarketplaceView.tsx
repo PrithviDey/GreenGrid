@@ -111,6 +111,19 @@ export function MarketplaceView({
 
     setProcessingId(listingId);
     try {
+      if (listingId >= 101) {
+        toast.info("Sending payment deposit to escrow contract (Simulated)...");
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        
+        const purchasedMocks = JSON.parse(localStorage.getItem("greengrid_purchased_mocks") || "[]");
+        purchasedMocks.push(listingId);
+        localStorage.setItem("greengrid_purchased_mocks", JSON.stringify(purchasedMocks));
+        
+        toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
+        onSuccess();
+        return;
+      }
+
       toast.info("Sending payment deposit to escrow contract via MetaMask...");
       await buyEnergyListing(signer, listingId, totalCostMatic);
       toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
