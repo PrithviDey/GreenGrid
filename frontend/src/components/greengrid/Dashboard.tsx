@@ -1076,7 +1076,7 @@ function QuickTrade({
           ) : walletMismatch ? (
             "Wallet Mismatch - Switch MetaMask Account"
           ) : account ? (
-            "Sign & Escrow Excess Energy"
+            "List Energy for Sale"
           ) : (
             "Connect Wallet to List"
           )}
