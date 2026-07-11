@@ -331,8 +331,8 @@ function HubNode() {
 
 /* ── House Node (large card) ─────────────────────────────────────────────── */
 function HouseNode({ node }: { node: GridNode }) {
-  const W = node.isUser ? 160 : 140;
-  const H = node.isUser ? 110 : 96;
+  const W = node.isUser ? 220 : 140;
+  const H = node.isUser ? 148 : 96;
   const rx = W / 2;
   const ry = H / 2;
 
@@ -351,12 +351,36 @@ function HouseNode({ node }: { node: GridNode }) {
     ? (node.role === "exporting" ? "🏠☀️" : node.role === "importing" ? "🏠🔌" : "🏠")
     : node.role === "exporting" ? "☀️" : node.role === "importing" ? "🔌" : "🏡";
 
-  const iconSize = node.isUser ? 26 : 22;
+  const iconSize = node.isUser ? 36 : 22;
 
   return (
     <g filter={`url(#${filterId})`}>
-      {/* Outer glow halo for active nodes */}
-      {node.role !== "idle" && (
+      {/* User house: double outer halo for prominence */}
+      {node.isUser && (
+        <>
+          <rect
+            x={node.x - rx - 16} y={node.y - ry - 16}
+            width={W + 32} height={H + 32}
+            rx="28" ry="28"
+            fill="none"
+            stroke={node.role === "exporting" ? `${G}0.12)` : node.role === "importing" ? `${C}0.12)` : "rgba(255,255,255,0.06)"}
+            strokeWidth="3"
+            className="node-pulse-user"
+          />
+          <rect
+            x={node.x - rx - 8} y={node.y - ry - 8}
+            width={W + 16} height={H + 16}
+            rx="22" ry="22"
+            fill="none"
+            stroke={node.role === "exporting" ? `${G}0.35)` : node.role === "importing" ? `${C}0.35)` : "rgba(255,255,255,0.12)"}
+            strokeWidth="2"
+            className="node-pulse-user"
+            style={{ animationDelay: "-0.9s" }}
+          />
+        </>
+      )}
+      {/* Neighbour glow halo — only when active */}
+      {!node.isUser && node.role !== "idle" && (
         <rect
           x={node.x - rx - 6} y={node.y - ry - 6}
           width={W + 12} height={H + 12}
@@ -364,7 +388,7 @@ function HouseNode({ node }: { node: GridNode }) {
           fill="none"
           stroke={node.role === "exporting" ? `${G}0.2)` : `${C}0.2)`}
           strokeWidth="2"
-          className={node.isUser ? "node-pulse-user" : "node-pulse"}
+          className="node-pulse"
         />
       )}
 
@@ -386,22 +410,43 @@ function HouseNode({ node }: { node: GridNode }) {
         fill={node.role === "exporting" ? `${G}0.4)` : node.role === "importing" ? `${C}0.4)` : "rgba(255,255,255,0.06)"}
       />
 
-      {/* Icon row */}
+      {/* Icon */}
       <text
-        x={node.x - rx + iconSize / 2 + 8}
-        y={node.y - ry + 30}
+        x={node.isUser ? node.x - rx + iconSize / 2 + 10 : node.x - rx + iconSize / 2 + 8}
+        y={node.y - ry + (node.isUser ? 36 : 30)}
         textAnchor="middle" dominantBaseline="middle"
         fontSize={iconSize}
       >{emoji}</text>
 
+      {/* "YOU" crown badge — only on user node */}
+      {node.isUser && (
+        <>
+          <rect
+            x={node.x - rx + iconSize + 22} y={node.y - ry + 10}
+            width={52} height={16}
+            rx="8"
+            fill={node.role === "exporting" ? `${G}0.18)` : node.role === "importing" ? `${C}0.18)` : "rgba(255,255,255,0.08)"}
+            stroke={node.role === "exporting" ? `${G}0.5)` : node.role === "importing" ? `${C}0.5)` : "rgba(255,255,255,0.15)"}
+            strokeWidth="1"
+          />
+          <text
+            x={node.x - rx + iconSize + 48} y={node.y - ry + 18}
+            textAnchor="middle" dominantBaseline="middle"
+            fontSize="8" fontWeight="800"
+            fontFamily="Space Grotesk, sans-serif"
+            fill={node.role === "exporting" ? `${G}1)` : node.role === "importing" ? `${C}1)` : "rgba(255,255,255,0.5)"}
+          >◆ YOU</text>
+        </>
+      )}
+
       {/* Name */}
       <text
-        x={node.x - rx + iconSize + 18}
-        y={node.y - ry + 22}
-        fontSize={node.isUser ? 13 : 11.5}
+        x={node.x - rx + iconSize + (node.isUser ? 18 : 18)}
+        y={node.y - ry + (node.isUser ? 34 : 22)}
+        fontSize={node.isUser ? 15 : 11.5}
         fontWeight="800"
         fontFamily="Space Grotesk, sans-serif"
-        fill="rgba(255,255,255,0.95)"
+        fill="rgba(255,255,255,0.97)"
       >
         {node.isUser ? "My House" : node.label}
       </text>
@@ -409,8 +454,8 @@ function HouseNode({ node }: { node: GridNode }) {
       {/* Address */}
       <text
         x={node.x - rx + iconSize + 18}
-        y={node.y - ry + 38}
-        fontSize="8.5"
+        y={node.y - ry + (node.isUser ? 52 : 38)}
+        fontSize={node.isUser ? 9.5 : 8.5}
         fontFamily="JetBrains Mono, monospace"
         fill="rgba(255,255,255,0.28)"
       >
@@ -419,22 +464,22 @@ function HouseNode({ node }: { node: GridNode }) {
 
       {/* Divider */}
       <line
-        x1={node.x - rx + 10} y1={node.y - ry + 50}
-        x2={node.x + rx - 10} y2={node.y - ry + 50}
+        x1={node.x - rx + 10} y1={node.y - ry + (node.isUser ? 70 : 50)}
+        x2={node.x + rx - 10} y2={node.y - ry + (node.isUser ? 70 : 50)}
         stroke="rgba(255,255,255,0.06)" strokeWidth="1"
       />
 
       {/* Status pill */}
       <rect
-        x={node.x - rx + 10} y={node.y - ry + 56}
-        width={W - 20} height={H - 70}
+        x={node.x - rx + 10} y={node.y - ry + (node.isUser ? 76 : 56)}
+        width={W - 20} height={node.isUser ? 56 : H - 70}
         rx="8" ry="8"
         fill={roleFill(node.role)}
       />
       <text
-        x={node.x} y={node.y - ry + 56 + (H - 70) / 2}
+        x={node.x} y={node.y - ry + (node.isUser ? 76 : 56) + (node.isUser ? 56 : H - 70) / 2}
         textAnchor="middle" dominantBaseline="middle"
-        fontSize={node.isUser ? 10 : 9}
+        fontSize={node.isUser ? 12 : 9}
         fontWeight="700"
         fontFamily="Space Grotesk, sans-serif"
         fill={accent}
