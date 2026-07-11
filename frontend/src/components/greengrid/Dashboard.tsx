@@ -1,0 +1,1109 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  Wallet,
+  Zap,
+  Sun,
+  Activity,
+  Coins,
+  Leaf,
+  Radio,
+  Settings2,
+  ArrowUpRight,
+  ArrowDownLeft,
+  ShieldCheck,
+  CircleDot,
+  ArrowRight,
+  TrendingUp,
+  TrendingDown,
+  RefreshCw,
+  Clock
+} from "lucide-react";
+import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { EnergyMap } from "./EnergyMap";
+import { toast } from "sonner";
+import { ethers } from "ethers";
+
+// Import Web3 Helpers
+import {
+  connectWallet,
+  getGCBalance,
+  getListingsFromChain,
+  createListing,
+  buyEnergyListing,
+  settleListingViaOracle,
+  abortListingViaOracle,
+  mintCreditsViaOracle,
+  Listing,
+  GREEN_COIN_ADDRESS,
+  ENERGY_TRADING_ADDRESS
+} from "../../lib/web3";
+
+const generationCurve = [
+  { t: "6", kwh: 0.2 },
+  { t: "8", kwh: 1.4 },
+  { t: "10", kwh: 4.8 },
+  { t: "12", kwh: 8.2 },
+  { t: "13", kwh: 8.9 },
+  { t: "14", kwh: 8.5 },
+  { t: "16", kwh: 6.1 },
+  { t: "18", kwh: 2.3 },
+  { t: "20", kwh: 0.4 },
+];
+
+const consumptionCurve = [
+  { t: "6", kwh: 1.1 },
+  { t: "8", kwh: 2.8 },
+  { t: "10", kwh: 2.1 },
+  { t: "12", kwh: 3.4 },
+  { t: "13", kwh: 3.9 },
+  { t: "14", kwh: 3.2 },
+  { t: "16", kwh: 2.5 },
+  { t: "18", kwh: 4.1 },
+  { t: "20", kwh: 3.6 },
+];
+
+type Tx = {
+  id: string;
+  kind: "sell" | "buy";
+  kwh: number;
+  gc: number;
+  addr: string;
+  ago: string;
+};
+
+const seedTx: Tx[] = [
+  { id: "0xa1", kind: "sell", kwh: 2.5, gc: 5, addr: "0x89F...7C2", ago: "just now" },
+  { id: "0xa2", kind: "sell", kwh: 1.2, gc: 2.4, addr: "0x41A...9E8", ago: "12s" },
+  { id: "0xa3", kind: "buy", kwh: 0.8, gc: 1.6, addr: "Utility Grid", ago: "38s" },
+  { id: "0xa4", kind: "sell", kwh: 3.1, gc: 6.2, addr: "0xB0D...1F4", ago: "1m" },
+  { id: "0xa5", kind: "sell", kwh: 0.6, gc: 1.2, addr: "0x77E...C10", ago: "2m" },
+];
+
+function truncateAddress(address: string) {
+  if (!address || address === ethers.ZeroAddress) return "None";
+  return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+}
+
+export function Dashboard() {
+  const [minPrice, setMinPrice] = useState<number[]>([1.8]);
+  const [autoTrade, setAutoTrade] = useState(true);
+  const [feed, setFeed] = useState<Tx[]>(seedTx);
+  
+  // Web3 states
+  const [account, setAccount] = useState<string | null>(null);
+  const [balanceGC, setBalanceGC] = useState<string>("0");
+  const [signer, setSigner] = useState<ethers.Signer | null>(null);
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [loadingListings, setLoadingListings] = useState<boolean>(false);
+  const [oracleStatus, setOracleStatus] = useState<boolean>(false);
+
+  // Dynamic Solar Telemetry simulation states
+  const [simHour, setSimHour] = useState<number>(12);
+  const [simGen, setSimGen] = useState<number>(8.5);
+  const [simCon, setSimCon] = useState<number>(3.2);
+
+  // Dynamic Sparkline histories (rolling windows of last 9 hours)
+  const [genHistory, setGenHistory] = useState<{ t: string; kwh: number }[]>(generationCurve);
+  const [conHistory, setConHistory] = useState<{ t: string; kwh: number }[]>(consumptionCurve);
+
+  // Ticking simulated clock matching the smart meter speed (3 seconds per hour)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSimHour(prev => {
+        const next = (prev + 1) % 24;
+        
+        // Solar Curve Generation
+        let gen = 0;
+        if (next >= 6 && next <= 18) {
+          const angle = Math.PI * (next - 6) / 12;
+          gen = 8.5 * Math.sin(angle) * (0.90 + Math.random() * 0.10);
+        }
+        
+        // Load Curve Consumption
+        let con = 0.8;
+        if (next >= 7 && next <= 9) con = 3.5;
+        else if (next >= 18 && next <= 21) con = 5.0;
+        else if (next >= 10 && next <= 16) con = 1.8;
+        con += Math.random() * 0.4 - 0.2;
+        
+        const finalGen = parseFloat(gen.toFixed(2));
+        const finalCon = parseFloat(Math.max(0.1, con).toFixed(2));
+
+        setSimGen(finalGen);
+        setSimCon(finalCon);
+        
+        // Push to rolling history arrays
+        setGenHistory(prev => [...prev.slice(1), { t: next.toString(), kwh: finalGen }]);
+        setConHistory(prev => [...prev.slice(1), { t: next.toString(), kwh: finalCon }]);
+        
+        return next;
+      });
+    }, 3000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const netFlow = simGen - simCon;
+
+  // Connect Wallet handler
+  const handleConnect = async () => {
+    try {
+      const wallet = await connectWallet();
+      setAccount(wallet.address);
+      setSigner(wallet.signer);
+      toast.success("Wallet connected successfully!");
+      refreshState(wallet.address);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to connect wallet");
+    }
+  };
+
+  // Refresh Web3 balances and on-chain listings
+  const refreshState = async (addr?: string) => {
+    const activeAddr = addr || account;
+    if (activeAddr) {
+      const bal = await getGCBalance(activeAddr);
+      setBalanceGC(parseFloat(bal).toFixed(2));
+    }
+    
+    setLoadingListings(true);
+    const chainListings = await getListingsFromChain();
+    setListings(chainListings);
+    setLoadingListings(false);
+  };
+
+  // Ping backend to check if Oracle is running
+  const checkBackendOracle = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/");
+      if (res.ok) {
+        setOracleStatus(true);
+      } else {
+        setOracleStatus(false);
+      }
+    } catch {
+      setOracleStatus(false);
+    }
+  };
+
+  useEffect(() => {
+    checkBackendOracle();
+    refreshState();
+    
+    // Auto refresh listings and status every 8 seconds
+    const interval = setInterval(() => {
+      refreshState();
+      checkBackendOracle();
+    }, 8000);
+    
+    return () => clearInterval(interval);
+  }, [account]);
+
+  // Simulate a rolling ledger (fallback / visual effect)
+  useEffect(() => {
+    const id = setInterval(() => {
+      const addrs = ["0x2D001...5dC", "0xd3031...a67", "0x89F...7C2", "0x41A...9E8", "0xB0D...1F4"];
+      const kwh = +(0.3 + Math.random() * 4.2).toFixed(1);
+      const gc = +(kwh * (1.7 + Math.random() * 0.6)).toFixed(1);
+      const kind: "sell" | "buy" = Math.random() > 0.25 ? "sell" : "buy";
+      const next: Tx = {
+        id: Math.random().toString(16).slice(2, 8),
+        kind,
+        kwh,
+        gc,
+        addr: addrs[Math.floor(Math.random() * addrs.length)],
+        ago: "just now",
+      };
+      setFeed((f) => [next, ...f].slice(0, 6));
+    }, 8000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div className="min-h-screen text-foreground">
+      <Navbar account={account} balanceGC={balanceGC} onConnect={handleConnect} />
+      
+      <main className="mx-auto max-w-[1500px] space-y-5 px-5 pb-10 pt-6">
+        
+        {/* Connection/Oracle Alert */}
+        {!oracleStatus && (
+          <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-400 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CircleDot className="h-4 w-4 text-red-500 animate-pulse" />
+              <span><strong>Oracle Offline:</strong> The FastAPI backend server is not running on <code>http://127.0.0.1:8000</code>. Oracle confirmations will fail. Please run the server to test full settlement.</span>
+            </div>
+          </div>
+        )}
+
+        {/* Row 1: Map full width */}
+        <EnergyMap account={account} netFlow={netFlow} />
+
+        {/* Row 2: Stats + QuickTrade + Ledger */}
+        <div className="grid grid-cols-12 gap-5">
+          <aside className="col-span-12 lg:col-span-4 space-y-5">
+            <LiveStats 
+              generation={simGen} 
+              consumption={simCon} 
+              netFlow={netFlow} 
+              hour={simHour} 
+              genHistory={genHistory}
+              conHistory={conHistory}
+            />
+            <EnvCard account={account} onSuccess={() => refreshState()} />
+          </aside>
+
+          <section className="col-span-12 lg:col-span-5 space-y-5">
+            <QuickTrade 
+              signer={signer} 
+              account={account} 
+              suggestedPrice={minPrice[0]} 
+              onSuccess={() => refreshState()} 
+              onConnect={handleConnect}
+            />
+            <ActionCard
+              minPrice={minPrice[0]}
+              onMinPrice={(v) => setMinPrice(v)}
+              autoTrade={autoTrade}
+              setAutoTrade={setAutoTrade}
+            />
+          </section>
+
+          <aside className="col-span-12 lg:col-span-3">
+            <Ledger feed={feed} />
+          </aside>
+        </div>
+
+        {/* Row 3: Active Listings/Marketplace */}
+        <ActiveListings 
+          listings={listings} 
+          loading={loadingListings} 
+          signer={signer} 
+          account={account} 
+          onSuccess={() => refreshState()}
+        />
+
+      </main>
+    </div>
+  );
+}
+
+function Navbar({ 
+  account, 
+  balanceGC, 
+  onConnect 
+}: { 
+  account: string | null; 
+  balanceGC: string; 
+  onConnect: () => void;
+}) {
+  return (
+    <header className="sticky top-0 z-30 border-b border-white/5 backdrop-blur-xl bg-background/60">
+      <div className="mx-auto flex max-w-[1500px] items-center justify-between px-5 py-3">
+        <div className="flex items-center gap-2.5">
+          <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--gradient-neon)] shadow-[var(--shadow-neon)]">
+            <Leaf className="h-5 w-5 text-background" strokeWidth={2.5} />
+          </div>
+          <div className="flex flex-col leading-none">
+            <span className="font-[Space_Grotesk] text-lg font-bold tracking-tight">
+              Green<span className="text-glow-green">Grid</span>
+            </span>
+            <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              P2P Solar · Polygon Amoy
+            </span>
+          </div>
+        </div>
+
+        <nav className="hidden md:flex items-center gap-1 rounded-full glass-panel px-1.5 py-1.5 text-sm">
+          {["Grid", "Market", "Contracts", "Analytics"].map((n, i) => (
+            <button
+              key={n}
+              className={`rounded-full px-4 py-1.5 transition ${
+                i === 0
+                  ? "bg-white/8 text-glow-green"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {n}
+            </button>
+          ))}
+        </nav>
+
+        <div className="flex items-center gap-2">
+          {account && (
+            <div className="hidden sm:flex items-center gap-2 glass-panel px-3 py-2 font-[JetBrains_Mono] text-xs">
+              <Coins className="h-4 w-4 text-glow-green" />
+              <span className="font-semibold">{balanceGC}</span>
+              <span className="text-muted-foreground">GRN</span>
+            </div>
+          )}
+          
+          {account ? (
+            <div className="flex items-center gap-2 glass-panel px-3 py-2 text-xs">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--neon-green)] opacity-70"></span>
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--neon-green)]"></span>
+              </span>
+              <Wallet className="h-4 w-4 text-glow-cyan" />
+              <span className="font-[JetBrains_Mono]">{truncateAddress(account)}</span>
+            </div>
+          ) : (
+            <Button 
+              onClick={onConnect}
+              className="bg-[var(--gradient-neon)] text-background font-semibold hover:opacity-90 shadow-[var(--shadow-neon)] px-4 py-2 rounded-xl text-xs flex items-center gap-2"
+            >
+              <Wallet className="h-4 w-4" />
+              Connect Wallet
+            </Button>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function LiveStats({
+  generation,
+  consumption,
+  netFlow,
+  hour,
+  genHistory,
+  conHistory
+}: {
+  generation: number;
+  consumption: number;
+  netFlow: number;
+  hour: number;
+  genHistory: { t: string; kwh: number }[];
+  conHistory: { t: string; kwh: number }[];
+}) {
+  const ampm = hour < 12 ? "AM" : "PM";
+  const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+  const timeStr = `${displayHour.toString().padStart(2, '0')}:00 ${ampm}`;
+
+  const isExporting = netFlow >= 0;
+  
+  return (
+    <div className="glass-panel p-5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground flex items-center gap-1.5">
+          Live Stats <span className="text-[10px] text-[var(--neon-cyan)] lowercase font-mono">({timeStr})</span>
+        </span>
+        <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+          <CircleDot className="h-3 w-3 text-[var(--neon-green)] animate-pulse" /> streaming
+        </span>
+      </div>
+
+      <div className="mt-5 space-y-4">
+        <StatWithSparkline
+          label="Current Generation"
+          value={generation.toFixed(2)}
+          unit="kWh"
+          delta="+12.4%"
+          up
+          tone="green"
+          icon={<Sun className="h-3.5 w-3.5" />}
+          data={genHistory}
+        />
+        <StatWithSparkline
+          label="Current Consumption"
+          value={consumption.toFixed(2)}
+          unit="kWh"
+          delta="−4.1%"
+          up={false}
+          tone="cyan"
+          icon={<Activity className="h-3.5 w-3.5" />}
+          data={conHistory}
+        />
+        <StatWithSparkline
+          label={isExporting ? "Net Export" : "Net Import"}
+          value={Math.abs(netFlow).toFixed(2)}
+          unit="kWh"
+          delta={isExporting ? "+8.2%" : "−3.5%"}
+          up={isExporting}
+          tone={isExporting ? "green" : "cyan"}
+          icon={<Zap className="h-3.5 w-3.5" />}
+          data={genHistory.map((d, i) => {
+            const conVal = conHistory[i] ? conHistory[i].kwh : 0;
+            return {
+              t: d.t,
+              kwh: Math.max(0, d.kwh - conVal)
+            };
+          })}
+        />
+      </div>
+    </div>
+  );
+}
+
+function StatWithSparkline({
+  label,
+  value,
+  unit,
+  delta,
+  up,
+  tone,
+  icon,
+  data,
+}: {
+  label: string;
+  value: string;
+  unit: string;
+  delta: string;
+  up: boolean;
+  tone: "green" | "cyan";
+  icon: React.ReactNode;
+  data: { t: string; kwh: number }[];
+}) {
+  const color = tone === "green" ? "var(--neon-green)" : "var(--neon-cyan)";
+  const glowClass = tone === "green" ? "text-glow-green" : "text-glow-cyan";
+  const gradId = `spark-${label.replace(/\s+/g, "")}`;
+  return (
+    <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
+          <span style={{ color }}>{icon}</span>
+          {label}
+        </div>
+        <div
+          className={`flex items-center gap-1 text-[10px] font-[JetBrains_Mono] ${
+            up ? "text-[var(--neon-green)]" : "text-muted-foreground"
+          }`}
+        >
+          {up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+          {delta}
+        </div>
+      </div>
+
+      <div className="mt-1 flex items-end justify-between gap-2">
+        <div className="flex items-baseline gap-1">
+          <span className={`font-[Space_Grotesk] text-3xl font-bold tracking-tight ${glowClass}`}>
+            {value}
+          </span>
+          <span className="text-xs text-muted-foreground">{unit}</span>
+        </div>
+        <div className="h-10 flex-1 max-w-[130px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={color} stopOpacity={0.55} />
+                  <stop offset="100%" stopColor={color} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <XAxis dataKey="t" hide />
+              <YAxis hide />
+              <Area
+                type="monotone"
+                dataKey="kwh"
+                stroke={color}
+                strokeWidth={1.8}
+                fill={`url(#${gradId})`}
+                isAnimationActive={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuickTrade({ 
+  signer, 
+  account, 
+  suggestedPrice, 
+  onSuccess,
+  onConnect
+}: { 
+  signer: ethers.Signer | null; 
+  account: string | null;
+  suggestedPrice: number; 
+  onSuccess: () => void;
+  onConnect: () => void;
+}) {
+  const [side, setSide] = useState<"sell" | "buy">("sell");
+  const [amount, setAmount] = useState("5.0");
+  const [price, setPrice] = useState(suggestedPrice.toFixed(2));
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setPrice(suggestedPrice.toFixed(2));
+  }, [suggestedPrice]);
+
+  const total = (parseFloat(amount || "0") * parseFloat(price || "0") || 0).toFixed(2);
+  const isSell = side === "sell";
+  const accent = isSell ? "var(--neon-green)" : "var(--neon-cyan)";
+  const accentClass = isSell ? "text-glow-green" : "text-glow-cyan";
+
+  const handleSubmit = async () => {
+    if (!account || !signer) {
+      onConnect();
+      return;
+    }
+
+    if (parseFloat(amount) <= 0 || parseFloat(price) <= 0) {
+      toast.error("Please enter a valid amount and price");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (isSell) {
+        toast.info("1. Approvng GreenCoin token spend in MetaMask...");
+        const receipt = await createListing(signer, amount, price);
+        toast.success("✔ Energy listed successfully on the blockchain!");
+        onSuccess();
+      } else {
+        toast.info("Please select an active order from the Marketplace below to buy.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.reason || err.message || "Transaction failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="glass-panel p-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            Quick Trade
+          </div>
+          <div className="mt-1 font-[Space_Grotesk] text-lg font-semibold">
+            Instant P2P Order
+          </div>
+        </div>
+        <div className="text-right text-[11px] text-muted-foreground">
+          <div>Action</div>
+          <div className="font-[JetBrains_Mono] text-foreground">
+            {isSell ? "List Excess Energy" : "Buy from Neighbors"}
+          </div>
+        </div>
+      </div>
+
+      {/* Side toggle */}
+      <div className="mt-4 grid grid-cols-2 gap-1 rounded-xl border border-white/5 bg-white/[0.02] p-1">
+        <button
+          onClick={() => setSide("sell")}
+          className={`rounded-lg py-2.5 text-sm font-semibold transition ${
+            isSell
+              ? "bg-[var(--neon-green)]/15 text-glow-green shadow-[inset_0_0_0_1px_var(--neon-green)]"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <ArrowUpRight className="mr-1 inline h-4 w-4" />
+          Sell Energy
+        </button>
+        <button
+          onClick={() => setSide("buy")}
+          className={`rounded-lg py-2.5 text-sm font-semibold transition ${
+            !isSell
+              ? "bg-[var(--neon-cyan)]/15 text-glow-cyan shadow-[inset_0_0_0_1px_var(--neon-cyan)]"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <ArrowDownLeft className="mr-1 inline h-4 w-4" />
+          Buy Energy
+        </button>
+      </div>
+
+      {/* Inputs */}
+      {isSell ? (
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <FieldGroup
+            label="Amount"
+            suffix="kWh"
+            value={amount}
+            onChange={setAmount}
+            quickValues={["1", "2.5", "5", "10"]}
+            onQuick={setAmount}
+          />
+          <FieldGroup
+            label="Price"
+            suffix="POL/kWh"
+            value={price}
+            onChange={setPrice}
+            hint={`market · ${suggestedPrice.toFixed(2)}`}
+          />
+        </div>
+      ) : (
+        <div className="mt-4 border border-dashed border-white/10 rounded-xl p-6 text-center text-sm text-muted-foreground">
+          Select an active listing in the **Marketplace** at the bottom of the page to match and purchase.
+        </div>
+      )}
+
+      {/* Summary */}
+      {isSell && (
+        <div className="mt-4 rounded-xl border border-white/5 bg-white/[0.02] p-4">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>You receive</span>
+            <span className="font-[JetBrains_Mono]">gas ~0.0002 POL</span>
+          </div>
+          <div className="mt-1 flex items-baseline justify-between">
+            <div className="flex items-baseline gap-1.5">
+              <span className={`font-[Space_Grotesk] text-3xl font-bold ${accentClass}`}>
+                {total}
+              </span>
+              <span className="text-sm text-muted-foreground">POL</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="font-[JetBrains_Mono]">{amount || "0"} GRN (kWh)</span>
+              <ArrowRight className="h-3 w-3" />
+              <span className="font-[JetBrains_Mono]">{total} POL</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isSell && (
+        <Button
+          disabled={loading}
+          onClick={handleSubmit}
+          className="mt-4 h-12 w-full text-base font-semibold text-background hover:opacity-90 disabled:opacity-50"
+          style={{
+            background: isSell
+              ? "var(--gradient-neon)"
+              : "linear-gradient(135deg, var(--neon-cyan), var(--neon-green))",
+            boxShadow: `0 0 30px color-mix(in oklab, ${accent} 40%, transparent)`,
+          }}
+        >
+          {loading ? (
+            <span className="flex items-center gap-2">
+              <RefreshCw className="h-4 w-4 animate-spin" /> Processing...
+            </span>
+          ) : account ? (
+            "Sign & Escrow Excess Energy"
+          ) : (
+            "Connect Wallet to List"
+          )}
+        </Button>
+      )}
+
+      <div className="mt-3 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+        <ShieldCheck className="h-3 w-3 text-[var(--neon-green)]" />
+        Executes via GreenGrid Smart Contracts
+      </div>
+    </div>
+  );
+}
+
+function FieldGroup({
+  label,
+  suffix,
+  value,
+  onChange,
+  quickValues,
+  onQuick,
+  hint,
+}: {
+  label: string;
+  suffix: string;
+  value: string;
+  onChange: (v: string) => void;
+  quickValues?: string[];
+  onQuick?: (v: string) => void;
+  hint?: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <label className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          {label}
+        </label>
+        {hint && (
+          <span className="text-[10px] font-[JetBrains_Mono] text-muted-foreground">{hint}</span>
+        )}
+      </div>
+      <div className="relative mt-1.5">
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-11 border-white/10 bg-white/[0.03] pr-16 font-[JetBrains_Mono] text-base focus-visible:ring-[var(--neon-green)]/40"
+        />
+        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
+          {suffix}
+        </span>
+      </div>
+      {quickValues && (
+        <div className="mt-2 flex gap-1">
+          {quickValues.map((q) => (
+            <button
+              key={q}
+              onClick={() => onQuick?.(q)}
+              className="flex-1 rounded-md border border-white/5 bg-white/[0.02] py-1 text-[10px] font-[JetBrains_Mono] text-muted-foreground transition hover:border-[var(--neon-green)]/30 hover:text-foreground"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EnvCard({ account, onSuccess }: { account: string | null; onSuccess: () => void }) {
+  const [loading, setLoading] = useState(false);
+
+  const handleMintTestCredits = async () => {
+    if (!account) {
+      toast.error("Please connect your wallet first!");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await mintCreditsViaOracle(account, 50.0);
+      toast.success("✔ Successfully minted 50.0 GRN (kWh) test credits to your wallet via Oracle!");
+      onSuccess();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to mint test credits");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="glass-panel p-5">
+      <div className="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-muted-foreground">
+        <span>Impact & Faucet</span>
+        <Leaf className="h-3.5 w-3.5 text-[var(--neon-green)]" />
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3 items-center">
+        <div>
+          <div className="font-[Space_Grotesk] text-2xl font-bold">4.2<span className="text-sm text-muted-foreground ml-1">kg</span></div>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">CO₂ offset</div>
+        </div>
+        <div>
+          <Button
+            size="sm"
+            disabled={loading || !account}
+            onClick={handleMintTestCredits}
+            className="w-full bg-[var(--neon-green)]/10 border border-[var(--neon-green)]/20 hover:bg-[var(--neon-green)]/20 text-glow-green text-[10px] py-4 uppercase font-semibold"
+          >
+            {loading ? "Minting..." : "Simulate Solar (Mint 50 GRN)"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActionCard({
+  minPrice,
+  onMinPrice,
+  autoTrade,
+  setAutoTrade,
+}: {
+  minPrice: number;
+  onMinPrice: (v: number[]) => void;
+  autoTrade: boolean;
+  setAutoTrade: (b: boolean) => void;
+}) {
+  return (
+    <div className="glass-panel p-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Settings2 className="h-4 w-4 text-[var(--neon-cyan)]" />
+          <h3 className="font-[Space_Grotesk] text-lg font-semibold">Trading Parameters</h3>
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <ShieldCheck className="h-3.5 w-3.5 text-[var(--neon-green)]" />
+          Smart contracts synced
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-6 md:grid-cols-2">
+        <div>
+          <div className="flex items-baseline justify-between">
+            <label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              Minimum Sell Price
+            </label>
+            <div className="font-[JetBrains_Mono] text-sm">
+              <span className="text-glow-green font-semibold">{minPrice.toFixed(2)}</span>
+              <span className="ml-1 text-muted-foreground">POL / kWh</span>
+            </div>
+          </div>
+          <Slider
+            value={[minPrice]}
+            onValueChange={onMinPrice}
+            min={0.5}
+            max={5}
+            step={0.05}
+            className="mt-4"
+          />
+          <div className="mt-2 flex justify-between font-[JetBrains_Mono] text-[10px] text-muted-foreground">
+            <span>0.50</span>
+            <span>market · 2.10</span>
+            <span>5.00</span>
+          </div>
+        </div>
+
+        <div className="flex flex-col justify-between rounded-xl border border-white/5 bg-white/[0.02] p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <Radio className="h-4 w-4 text-[var(--neon-green)]" />
+                <span className="font-[Space_Grotesk] font-semibold">Automated Smart Trading</span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Sign trades automatically when neighbors bid above your minimum.
+              </p>
+            </div>
+            <Switch
+              checked={autoTrade}
+              onCheckedChange={setAutoTrade}
+              className="data-[state=checked]:bg-[var(--neon-green)]"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Ledger({ feed }: { feed: Tx[] }) {
+  return (
+    <div className="glass-panel flex h-full min-h-[460px] flex-col p-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            Live Feed
+          </div>
+          <div className="mt-1 font-[Space_Grotesk] text-lg font-semibold">Activity Ticker</div>
+        </div>
+      </div>
+
+      <div className="mt-4 flex-1 space-y-2 overflow-hidden">
+        {feed.map((tx) => (
+          <div
+            key={tx.id}
+            className="group flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-3 transition"
+          >
+            <div
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                tx.kind === "sell"
+                  ? "bg-[var(--neon-green)]/12 text-[var(--neon-green)]"
+                  : "bg-[var(--neon-cyan)]/12 text-[var(--neon-cyan)]"
+              }`}
+            >
+              <Zap className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline gap-1.5 text-sm">
+                <span className={tx.kind === "sell" ? "text-glow-green font-semibold" : "text-glow-cyan font-semibold"}>
+                  {tx.kind === "sell" ? "Sold" : "Bought"}
+                </span>
+                <span className="font-[JetBrains_Mono]">{tx.kwh} kWh</span>
+                <span className="text-muted-foreground">·</span>
+                <span className="font-[JetBrains_Mono] text-xs text-muted-foreground truncate">
+                  {tx.addr}
+                </span>
+              </div>
+              <div className="mt-0.5 flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>{tx.ago}</span>
+                <span className="font-[JetBrains_Mono] text-foreground/80">
+                  {tx.kind === "sell" ? "+" : "−"}
+                  {tx.gc} POL
+                </span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Active Listings Component (Marketplace & Oracle Operations Panel)
+function ActiveListings({
+  listings,
+  loading,
+  signer,
+  account,
+  onSuccess
+}: {
+  listings: Listing[];
+  loading: boolean;
+  signer: ethers.Signer | null;
+  account: string | null;
+  onSuccess: () => void;
+}) {
+  const [processingId, setProcessingId] = useState<number | null>(null);
+
+  // Buy listing handler
+  const handleBuy = async (listingId: number, totalCostMatic: string) => {
+    if (!signer) {
+      toast.error("Please connect your wallet first!");
+      return;
+    }
+    
+    setProcessingId(listingId);
+    try {
+      toast.info("Sending payment deposit to escrow contract via MetaMask...");
+      const receipt = await buyEnergyListing(signer, listingId, totalCostMatic);
+      toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
+      onSuccess();
+    } catch (err: any) {
+      toast.error(err.reason || err.message || "Failed to purchase energy");
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  // Oracle settlement handler
+  const handleSettle = async (listingId: number) => {
+    setProcessingId(listingId);
+    try {
+      toast.info("Invoking Backend Oracle API to verify energy delivery...");
+      const res = await settleListingViaOracle(listingId);
+      toast.success(`✔ Oracle Verified: ${res.message}`);
+      onSuccess();
+    } catch (err: any) {
+      toast.error(err.message || "Oracle delivery settlement failed");
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  // Oracle abort handler
+  const handleAbort = async (listingId: number) => {
+    setProcessingId(listingId);
+    try {
+      toast.info("Invoking Backend Oracle API to cancel trade and trigger refunds...");
+      const res = await abortListingViaOracle(listingId);
+      toast.success(`✔ Oracle Aborted: ${res.message}`);
+      onSuccess();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to abort trade");
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  return (
+    <div className="glass-panel p-6 mt-6">
+      <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-4">
+        <div>
+          <h3 className="font-[Space_Grotesk] text-xl font-bold text-glow-green">GreenGrid P2P Marketplace</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">Explore active energy offers and confirm smart contract delivery</p>
+        </div>
+        <Button 
+          variant="outline" 
+          onClick={onSuccess} 
+          className="border-white/10 bg-white/[0.02] hover:bg-white/5 text-xs h-8 px-2 flex items-center gap-1.5"
+        >
+          <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
+          Refresh
+        </Button>
+      </div>
+
+      {loading && listings.length === 0 ? (
+        <div className="py-10 text-center text-muted-foreground flex flex-col items-center gap-2">
+          <RefreshCw className="h-6 w-6 animate-spin text-[var(--neon-green)]" />
+          <span className="text-sm">Fetching on-chain marketplace listings...</span>
+        </div>
+      ) : listings.length === 0 ? (
+        <div className="py-10 text-center text-muted-foreground border border-dashed border-white/5 rounded-xl">
+          <Sun className="h-8 w-8 mx-auto text-muted-foreground/30 mb-2" />
+          <p className="text-sm">No active listings found on the blockchain.</p>
+          <p className="text-xs text-muted-foreground/70 mt-1">Use the "Quick Trade" panel to list some excess solar energy!</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm text-muted-foreground">
+            <thead className="text-xs uppercase tracking-wider text-muted-foreground border-b border-white/5">
+              <tr>
+                <th className="py-3 px-4">ID</th>
+                <th className="py-3 px-4">Seller</th>
+                <th className="py-3 px-4">Amount (kWh)</th>
+                <th className="py-3 px-4">Price (POL/kWh)</th>
+                <th className="py-3 px-4">Escrow Value</th>
+                <th className="py-3 px-4 text-center">Status</th>
+                <th className="py-3 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5 font-[JetBrains_Mono] text-xs">
+              {listings.map((l) => {
+                const totalCost = (parseFloat(l.amount) * parseFloat(l.pricePerToken)).toFixed(4);
+                const isSeller = account && account.toLowerCase() === l.seller.toLowerCase();
+                const isBuyer = account && account.toLowerCase() === l.buyer.toLowerCase();
+                
+                return (
+                  <tr key={l.id} className="hover:bg-white/[0.01] transition-colors">
+                    <td className="py-4 px-4 font-semibold text-foreground">#{l.id}</td>
+                    <td className="py-4 px-4">{truncateAddress(l.seller)} {isSeller && <span className="text-[9px] bg-[var(--neon-green)]/15 text-glow-green px-1.5 py-0.5 rounded ml-1 uppercase">You</span>}</td>
+                    <td className="py-4 px-4 text-foreground">{l.amount}</td>
+                    <td className="py-4 px-4">{l.pricePerToken}</td>
+                    <td className="py-4 px-4 text-[var(--neon-cyan)]">{totalCost} POL</td>
+                    <td className="py-4 px-4 text-center">
+                      {l.isSettled ? (
+                        <span className="inline-flex items-center gap-1 bg-green-500/10 text-green-400 px-2 py-0.5 rounded-full text-[10px]">
+                          <ShieldCheck className="h-3 w-3" /> Settled
+                        </span>
+                      ) : l.isMatched ? (
+                        <span className="inline-flex items-center gap-1 bg-yellow-500/10 text-yellow-400 px-2 py-0.5 rounded-full text-[10px] animate-pulse">
+                          <Clock className="h-3 w-3" /> Matched (Awaiting Delivery)
+                        </span>
+                      ) : l.isActive ? (
+                        <span className="inline-flex items-center gap-1 bg-[var(--neon-green)]/10 text-glow-green px-2 py-0.5 rounded-full text-[10px]">
+                          <CircleDot className="h-3 w-3 text-[var(--neon-green)] animate-pulse" /> Active
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 bg-white/5 text-muted-foreground px-2 py-0.5 rounded-full text-[10px]">
+                          Inactive
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-4 px-4 text-right">
+                      {l.isActive && !l.isMatched && (
+                        <Button
+                          disabled={processingId === l.id || isSeller}
+                          onClick={() => handleBuy(l.id, totalCost)}
+                          size="sm"
+                          className="bg-glow-cyan/10 hover:bg-glow-cyan/20 text-glow-cyan text-[10px] font-semibold uppercase px-3 py-1 rounded-lg border border-[var(--neon-cyan)]/20"
+                        >
+                          {isSeller ? "Your Listing" : "Buy Offer"}
+                        </Button>
+                      )}
+
+                      {l.isMatched && !l.isSettled && (
+                        <div className="flex gap-1 justify-end">
+                          <Button
+                            disabled={processingId === l.id}
+                            onClick={() => handleSettle(l.id)}
+                            size="sm"
+                            className="bg-[var(--neon-green)] text-background hover:bg-[var(--neon-green)]/90 text-[10px] font-bold uppercase px-3 py-1 rounded-lg shadow-[var(--shadow-neon)]"
+                          >
+                            Simulate Delivery
+                          </Button>
+                          <Button
+                            disabled={processingId === l.id}
+                            onClick={() => handleAbort(l.id)}
+                            variant="destructive"
+                            size="sm"
+                            className="text-[10px] font-semibold uppercase px-2 py-1 rounded-lg"
+                          >
+                            Abort
+                          </Button>
+                        </div>
+                      )}
+
+                      {l.isSettled && (
+                        <span className="text-[10px] text-muted-foreground/50">Receipt: {truncateAddress(l.buyer)}</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

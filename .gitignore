@@ -1,0 +1,19 @@
+# Hardhat artifacts and cache
+artifacts/
+cache/
+
+# Node dependencies
+node_modules/
+package-lock.json
+
+# Python environment and cache
+.venv/
+__pycache__/
+*.pyc
+
+# Local private environment files
+.env
+deployed_addresses.json
+
+# OS specific files
+.DS_Store

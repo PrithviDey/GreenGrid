@@ -1,0 +1,8 @@
+# Polygon Amoy RPC URL (e.g., from Alchemy or Infura)
+AMOY_RPC_URL=https://polygon-amoy.g.alchemy.com/v2/YOUR_API_KEY
+
+# Private key of the deployer wallet (ensure it holds test MATIC)
+PRIVATE_KEY=0xYOUR_DEPLOYER_PRIVATE_KEY
+
+# Wallet address that will act as the authorized Oracle
+ORACLE_ADDRESS=0xYOUR_ORACLE_WALLET_ADDRESS
