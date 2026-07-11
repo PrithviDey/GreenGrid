@@ -27,7 +27,7 @@ import { EnergyMap } from "./EnergyMap";
 import { toast } from "sonner";
 import { ethers } from "ethers";
 import { Login } from "./Login";
-import { MarketplaceView, ContractsView, AnalyticsView } from "./MarketplaceView";
+import { MarketplaceView, ContractsView, AnalyticsView, SELLER_PROFILES } from "./MarketplaceView";
 
 // Import Web3 Helpers
 import {
@@ -606,6 +606,7 @@ export function Dashboard() {
                   onSuccess={() => refreshState()} 
                   onConnect={handleConnect}
                   walletMismatch={walletMismatch}
+                  listings={listings}
                 />
                 <ActionCard
                   minPrice={minPrice[0]}
@@ -911,7 +912,8 @@ function QuickTrade({
   suggestedPrice, 
   onSuccess,
   onConnect,
-  walletMismatch
+  walletMismatch,
+  listings
 }: { 
   signer: ethers.Signer | null; 
   account: string | null;
@@ -919,17 +921,50 @@ function QuickTrade({
   onSuccess: () => void;
   onConnect: () => void;
   walletMismatch?: boolean;
+  listings: Listing[];
 }) {
   const [side, setSide] = useState<"sell" | "buy">("sell");
   const [amount, setAmount] = useState("5.0");
   const [price, setPrice] = useState(suggestedPrice.toFixed(2));
+  const [selectedId, setSelectedId] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    setPrice(suggestedPrice.toFixed(2));
-  }, [suggestedPrice]);
+    if (side === "sell") {
+      setPrice(suggestedPrice.toFixed(2));
+    }
+  }, [suggestedPrice, side]);
 
-  const total = (parseFloat(amount || "0") * parseFloat(price || "0") || 0).toFixed(2);
+  const activeListings = useMemo(() => {
+    return listings.filter(
+      (l) => l.isActive && !l.isMatched && l.seller.toLowerCase() !== account?.toLowerCase()
+    );
+  }, [listings, account]);
+
+  // Auto-select cheapest listing on Buy tab
+  useEffect(() => {
+    if (side === "buy" && activeListings.length > 0) {
+      if (!selectedId || !activeListings.some(l => l.id.toString() === selectedId)) {
+        const sorted = [...activeListings].sort(
+          (a, b) => parseFloat(a.pricePerToken) - parseFloat(b.pricePerToken)
+        );
+        setSelectedId(sorted[0].id.toString());
+        setAmount(sorted[0].amount);
+        setPrice(parseFloat(sorted[0].pricePerToken).toString());
+      }
+    }
+  }, [side, activeListings, selectedId]);
+
+  const handleSelectListing = (idStr: string) => {
+    setSelectedId(idStr);
+    const l = activeListings.find(item => item.id.toString() === idStr);
+    if (l) {
+      setAmount(l.amount);
+      setPrice(parseFloat(l.pricePerToken).toString());
+    }
+  };
+
+  const total = (parseFloat(amount || "0") * parseFloat(price || "0") || 0).toFixed(6).replace(/\.?0+$/, "");
   const isSell = side === "sell";
   const accent = isSell ? "var(--neon-green)" : "var(--neon-cyan)";
   const accentClass = isSell ? "text-glow-green" : "text-glow-cyan";
@@ -941,26 +976,51 @@ function QuickTrade({
       return;
     }
 
-    if (parseFloat(amount) <= 0 || parseFloat(price) <= 0) {
-      toast.error("Please enter a valid amount and price");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      if (isSell) {
+    if (isSell) {
+      if (parseFloat(amount) <= 0 || parseFloat(price) <= 0) {
+        toast.error("Please enter a valid amount and price");
+        return;
+      }
+      setLoading(true);
+      try {
         toast.info("1. Approving GreenCoin token spend in MetaMask...");
         const receipt = await createListing(signer, amount, price);
         toast.success("✔ Energy listed successfully on the blockchain!");
         onSuccess();
-      } else {
-        toast.info("Please select an active order from the Marketplace below to buy.");
+      } catch (err: any) {
+        console.error(err);
+        toast.error(err.reason || err.message || "Transaction failed");
+      } finally {
+        setLoading(false);
       }
-    } catch (err: any) {
-      console.error(err);
-      toast.error(err.reason || err.message || "Transaction failed");
-    } finally {
-      setLoading(false);
+    } else {
+      const selectedListing = activeListings.find(l => l.id.toString() === selectedId);
+      if (!selectedListing) {
+        toast.error("Please select an active listing to purchase");
+        return;
+      }
+      setLoading(true);
+      try {
+        if (selectedListing.id >= 101) {
+          toast.info("Sending payment deposit to escrow contract (Simulated)...");
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          const purchasedMocks = JSON.parse(localStorage.getItem("greengrid_purchased_mocks") || "[]");
+          purchasedMocks.push(selectedListing.id);
+          localStorage.setItem("greengrid_purchased_mocks", JSON.stringify(purchasedMocks));
+          toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
+          onSuccess();
+        } else {
+          toast.info("Sending payment deposit to escrow contract via MetaMask...");
+          await buyEnergyListing(signer, selectedListing.id, total);
+          toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
+          onSuccess();
+        }
+      } catch (err: any) {
+        console.error(err);
+        toast.error(err.reason || err.message || "Failed to purchase energy");
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -1029,63 +1089,117 @@ function QuickTrade({
           />
         </div>
       ) : (
-        <div className="mt-4 border border-dashed border-white/10 rounded-xl p-6 text-center text-sm text-muted-foreground">
-          Select an active listing in the **Marketplace** at the bottom of the page to match and purchase.
+        <div className="mt-4 space-y-3">
+          <div>
+            <label className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              Select Active Seller Listing
+            </label>
+            {activeListings.length > 0 ? (
+              <select
+                value={selectedId}
+                onChange={(e) => handleSelectListing(e.target.value)}
+                className="mt-1.5 w-full h-11 rounded-lg border border-white/10 bg-black/40 text-sm text-foreground focus:ring-1 focus:ring-[var(--neon-cyan)]/40 px-3 outline-none"
+              >
+                {activeListings.map((l) => {
+                  const profile = SELLER_PROFILES[l.seller.toLowerCase()];
+                  const name = profile ? profile.alias : truncateAddress(l.seller);
+                  return (
+                    <option key={l.id} value={l.id} className="bg-slate-900 text-foreground">
+                      {name} — {l.amount} kWh @ {parseFloat(l.pricePerToken)} POL/kWh
+                    </option>
+                  );
+                })}
+              </select>
+            ) : (
+              <div className="mt-1.5 border border-dashed border-white/10 rounded-xl p-4 text-center text-xs text-muted-foreground">
+                No active listings available to buy right now.
+              </div>
+            )}
+          </div>
+          {selectedId && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                  Amount to Buy
+                </label>
+                <div className="relative mt-1.5">
+                  <Input
+                    value={amount}
+                    disabled
+                    className="h-11 border-white/10 bg-white/[0.01] pr-16 font-[JetBrains_Mono] text-base opacity-75"
+                  />
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
+                    kWh
+                  </span>
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                  Seller Price
+                </label>
+                <div className="relative mt-1.5">
+                  <Input
+                    value={price}
+                    disabled
+                    className="h-11 border-white/10 bg-white/[0.01] pr-16 font-[JetBrains_Mono] text-base opacity-75"
+                  />
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
+                    POL/kWh
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Summary */}
-      {isSell && (
-        <div className="mt-4 rounded-xl border border-white/5 bg-white/[0.02] p-4">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>You receive</span>
-            <span className="font-[JetBrains_Mono]">gas ~0.0002 POL</span>
+      <div className="mt-4 rounded-xl border border-white/5 bg-white/[0.02] p-4">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>{isSell ? "You receive" : "You pay"}</span>
+          <span className="font-[JetBrains_Mono]">gas ~0.0002 POL</span>
+        </div>
+        <div className="mt-1 flex items-baseline justify-between">
+          <div className="flex items-baseline gap-1.5">
+            <span className={`font-[Space_Grotesk] text-3xl font-bold ${accentClass}`}>
+              {total}
+            </span>
+            <span className="text-sm text-muted-foreground">POL</span>
           </div>
-          <div className="mt-1 flex items-baseline justify-between">
-            <div className="flex items-baseline gap-1.5">
-              <span className={`font-[Space_Grotesk] text-3xl font-bold ${accentClass}`}>
-                {total}
-              </span>
-              <span className="text-sm text-muted-foreground">POL</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="font-[JetBrains_Mono]">{amount || "0"} GRN (kWh)</span>
-              <ArrowRight className="h-3 w-3" />
-              <span className="font-[JetBrains_Mono]">{total} POL</span>
-            </div>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="font-[JetBrains_Mono]">{amount || "0"} GRN (kWh)</span>
+            <ArrowRight className="h-3 w-3" />
+            <span className="font-[JetBrains_Mono]">{total} POL</span>
           </div>
         </div>
-      )}
+      </div>
 
-      {isSell && (
-        <Button
-          disabled={loading || walletMismatch}
-          onClick={handleSubmit}
-          className="mt-4 h-12 w-full text-base font-semibold text-background hover:opacity-90 disabled:opacity-50"
-          style={{
-            background: isSell
-              ? "var(--gradient-neon)"
-              : "linear-gradient(135deg, var(--neon-cyan), var(--neon-green))",
-            boxShadow: `0 0 30px color-mix(in oklab, ${accent} 40%, transparent)`,
-          }}
-        >
-          {loading ? (
-            <span className="flex items-center gap-2">
-              <RefreshCw className="h-4 w-4 animate-spin" /> Processing...
-            </span>
-          ) : walletMismatch ? (
-            "Wallet Mismatch - Switch MetaMask Account"
-          ) : account ? (
-            "List Energy for Sale"
-          ) : (
-            "Connect Wallet to List"
-          )}
-        </Button>
-      )}
-
+      <Button
+        disabled={loading || walletMismatch || (!isSell && activeListings.length === 0)}
+        onClick={handleSubmit}
+        className="mt-4 h-12 w-full text-base font-semibold text-background hover:opacity-90 disabled:opacity-50"
+        style={{
+          background: isSell
+            ? "var(--gradient-neon)"
+            : "linear-gradient(135deg, var(--neon-cyan), var(--neon-green))",
+          boxShadow: `0 0 30px color-mix(in oklab, ${accent} 40%, transparent)`,
+        }}
+      >
+        {loading ? (
+          <span className="flex items-center gap-2">
+            <RefreshCw className="h-4 w-4 animate-spin" /> Processing...
+          </span>
+        ) : walletMismatch ? (
+          "Wallet Mismatch - Switch MetaMask Account"
+        ) : account ? (
+          isSell ? "List Energy for Sale" : "Purchase Energy"
+        ) : (
+          isSell ? "Connect Wallet to List" : "Connect Wallet to Buy"
+        )}
+      </Button>
       <div className="mt-3 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-        <ShieldCheck className="h-3 w-3 text-[var(--neon-green)]" />
-        Executes via GreenGrid Smart Contracts
+        <ShieldCheck className={`h-3 w-3 ${isSell ? "text-[var(--neon-green)]" : "text-[var(--neon-cyan)]"}`} />
+        Executes via GreenGrid Escrow Contract
       </div>
     </div>
   );

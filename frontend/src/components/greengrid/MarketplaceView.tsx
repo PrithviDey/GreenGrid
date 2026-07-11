@@ -39,7 +39,7 @@ interface MarketplaceViewProps {
 }
 
 // --- Static Profile Data for Known Sellers ---
-const SELLER_PROFILES: Record<string, {
+export const SELLER_PROFILES: Record<string, {
   alias: string;
   location: string;
   panelKw: number;
