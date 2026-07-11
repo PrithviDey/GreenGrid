@@ -167,29 +167,47 @@ export function Dashboard() {
 
   const netFlow = simGen - simCon;
 
+  // Helper to synchronize connected wallet with user profiles
+  const syncUserWithWallet = (walletAddress: string, signerInstance: ethers.Signer) => {
+    if (!walletAddress) return;
+    
+    // Search if any user in localStorage is linked to this walletAddress
+    let foundUser: string | null = null;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("greengrid_wallet_")) {
+        const linkedVal = localStorage.getItem(key);
+        if (linkedVal && linkedVal.toLowerCase() === walletAddress.toLowerCase()) {
+          foundUser = key.replace("greengrid_wallet_", "");
+          break;
+        }
+      }
+    }
+
+    if (foundUser) {
+      // If a different user is associated with this wallet, switch the logged-in user profile
+      if (foundUser !== currentUser) {
+        setCurrentUser(foundUser);
+        localStorage.setItem("greengrid_user", foundUser);
+        toast.info(`Switched user profile to "${foundUser}" to match connected wallet.`);
+      }
+    } else if (currentUser) {
+      // If the wallet is new and not linked to any user yet, link it to current logged-in user
+      localStorage.setItem(`greengrid_wallet_${currentUser}`, walletAddress);
+      toast.success(`Linked wallet ${truncateAddress(walletAddress)} to user "${currentUser}"`);
+    }
+
+    setAccount(walletAddress);
+    setSigner(signerInstance);
+    refreshState(walletAddress);
+  };
+
   // Connect Wallet handler
   const handleConnect = async () => {
     try {
       const wallet = await connectWallet();
-      
-      if (currentUser) {
-        const lockedWallet = localStorage.getItem(`greengrid_wallet_${currentUser}`);
-        if (lockedWallet) {
-          if (lockedWallet.toLowerCase() !== wallet.address.toLowerCase()) {
-            toast.error(`Wallet mismatch: This user is locked to wallet ${truncateAddress(lockedWallet)}. Please switch accounts in MetaMask.`);
-            return;
-          }
-        } else {
-          // Permanently lock the first connected wallet to this user
-          localStorage.setItem(`greengrid_wallet_${currentUser}`, wallet.address);
-          toast.success(`Linked wallet ${truncateAddress(wallet.address)} to user ${currentUser}`);
-        }
-      }
-
-      setAccount(wallet.address);
-      setSigner(wallet.signer);
+      syncUserWithWallet(wallet.address, wallet.signer);
       toast.success("Wallet connected successfully!");
-      refreshState(wallet.address);
     } catch (err: any) {
       toast.error(err.message || "Failed to connect wallet");
     }
@@ -211,16 +229,7 @@ export function Dashboard() {
       });
       
       const wallet = await connectWallet();
-      
-      if (currentUser) {
-        // Link the new wallet address to the current user
-        localStorage.setItem(`greengrid_wallet_${currentUser}`, wallet.address);
-        toast.success(`Updated linked wallet for ${currentUser} to ${truncateAddress(wallet.address)}`);
-      }
-
-      setAccount(wallet.address);
-      setSigner(wallet.signer);
-      refreshState(wallet.address);
+      syncUserWithWallet(wallet.address, wallet.signer);
     } catch (err: any) {
       console.error(err);
       toast.error(err.message || "Failed to switch wallet");
@@ -487,23 +496,8 @@ export function Dashboard() {
           const accounts = await provider.listAccounts();
           if (accounts.length > 0) {
             const activeAddress = accounts[0].address;
-            const lockedWallet = localStorage.getItem(`greengrid_wallet_${currentUser}`);
-            
-            // Check mismatch or lock
-            if (lockedWallet) {
-              const signerInstance = await provider.getSigner();
-              setAccount(activeAddress);
-              setSigner(signerInstance);
-              refreshState(activeAddress);
-            } else {
-              // Not locked yet, link it
-              localStorage.setItem(`greengrid_wallet_${currentUser}`, activeAddress);
-              const signerInstance = await provider.getSigner();
-              setAccount(activeAddress);
-              setSigner(signerInstance);
-              refreshState(activeAddress);
-              toast.success(`Linked wallet ${truncateAddress(activeAddress)} to user ${currentUser}`);
-            }
+            const signerInstance = await provider.getSigner();
+            syncUserWithWallet(activeAddress, signerInstance);
           }
         } catch (err) {
           console.error("Auto-connect failed:", err);
@@ -519,9 +513,7 @@ export function Dashboard() {
           const newAddr = accounts[0];
           const provider = new ethers.BrowserProvider(window.ethereum);
           const signerInstance = await provider.getSigner();
-          setAccount(newAddr);
-          setSigner(signerInstance);
-          refreshState(newAddr);
+          syncUserWithWallet(newAddr, signerInstance);
         } else {
           setAccount(null);
           setSigner(null);
