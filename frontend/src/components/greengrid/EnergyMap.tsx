@@ -373,7 +373,7 @@ function HouseNode({ node }: { node: GridNode }) {
   const iconCX = node.x - rx + (node.isUser ? 22 : 16);  // left-aligned icon
 
   return (
-    <g filter={`url(#${filterId})`}>
+    <g filter={node.isUser ? undefined : `url(#${filterId})`}>
       {/* User: double pulsing halo */}
       {node.isUser && (
         <>
