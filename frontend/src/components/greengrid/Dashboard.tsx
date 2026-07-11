@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { EnergyMap } from "./EnergyMap";
 import { toast } from "sonner";
 import { ethers } from "ethers";
+import { Login } from "./Login";
 
 // Import Web3 Helpers
 import {
@@ -93,6 +94,14 @@ export function Dashboard() {
   const [autoTrade, setAutoTrade] = useState(true);
   const [feed, setFeed] = useState<Tx[]>([]);
   
+  // User Authentication state
+  const [currentUser, setCurrentUser] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("greengrid_user");
+    }
+    return null;
+  });
+
   // Web3 states
   const [account, setAccount] = useState<string | null>(null);
   const [balanceGC, setBalanceGC] = useState<string>("0");
@@ -100,6 +109,14 @@ export function Dashboard() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [loadingListings, setLoadingListings] = useState<boolean>(false);
   const [oracleStatus, setOracleStatus] = useState<boolean>(false);
+
+  // Calculate wallet mismatch relative to logged in user's locked address
+  const walletMismatch = useMemo(() => {
+    if (!currentUser || !account) return false;
+    const lockedWallet = localStorage.getItem(`greengrid_wallet_${currentUser}`);
+    if (!lockedWallet) return false;
+    return lockedWallet.toLowerCase() !== account.toLowerCase();
+  }, [currentUser, account]);
 
   // Dynamic Solar Telemetry simulation states
   const [simHour, setSimHour] = useState<number>(12);
@@ -152,6 +169,21 @@ export function Dashboard() {
   const handleConnect = async () => {
     try {
       const wallet = await connectWallet();
+      
+      if (currentUser) {
+        const lockedWallet = localStorage.getItem(`greengrid_wallet_${currentUser}`);
+        if (lockedWallet) {
+          if (lockedWallet.toLowerCase() !== wallet.address.toLowerCase()) {
+            toast.error(`Wallet mismatch: This user is locked to wallet ${truncateAddress(lockedWallet)}. Please switch accounts in MetaMask.`);
+            return;
+          }
+        } else {
+          // Permanently lock the first connected wallet to this user
+          localStorage.setItem(`greengrid_wallet_${currentUser}`, wallet.address);
+          toast.success(`Linked wallet ${truncateAddress(wallet.address)} to user ${currentUser}`);
+        }
+      }
+
       setAccount(wallet.address);
       setSigner(wallet.signer);
       toast.success("Wallet connected successfully!");
@@ -224,25 +256,133 @@ export function Dashboard() {
     }
   };
 
+  // Listen to accountsChanged and handle auto-connection on login
+  useEffect(() => {
+    if (!currentUser) {
+      setAccount(null);
+      setSigner(null);
+      return;
+    }
+
+    const initConnection = async () => {
+      if (window.ethereum) {
+        try {
+          const provider = new ethers.BrowserProvider(window.ethereum);
+          const accounts = await provider.listAccounts();
+          if (accounts.length > 0) {
+            const activeAddress = accounts[0].address;
+            const lockedWallet = localStorage.getItem(`greengrid_wallet_${currentUser}`);
+            
+            // Check mismatch or lock
+            if (lockedWallet) {
+              const signerInstance = await provider.getSigner();
+              setAccount(activeAddress);
+              setSigner(signerInstance);
+              refreshState(activeAddress);
+            } else {
+              // Not locked yet, link it
+              localStorage.setItem(`greengrid_wallet_${currentUser}`, activeAddress);
+              const signerInstance = await provider.getSigner();
+              setAccount(activeAddress);
+              setSigner(signerInstance);
+              refreshState(activeAddress);
+              toast.success(`Linked wallet ${truncateAddress(activeAddress)} to user ${currentUser}`);
+            }
+          }
+        } catch (err) {
+          console.error("Auto-connect failed:", err);
+        }
+      }
+    };
+
+    initConnection();
+
+    if (window.ethereum) {
+      const handleAccounts = async (accounts: string[]) => {
+        if (accounts.length > 0) {
+          const newAddr = accounts[0];
+          const provider = new ethers.BrowserProvider(window.ethereum);
+          const signerInstance = await provider.getSigner();
+          setAccount(newAddr);
+          setSigner(signerInstance);
+          refreshState(newAddr);
+        } else {
+          setAccount(null);
+          setSigner(null);
+        }
+      };
+      
+      window.ethereum.on("accountsChanged", handleAccounts);
+      return () => {
+        window.ethereum?.removeListener("accountsChanged", handleAccounts);
+      };
+    }
+  }, [currentUser]);
+
   useEffect(() => {
     checkBackendOracle();
-    refreshState();
+    if (currentUser) {
+      refreshState();
+    }
     
     // Auto refresh listings and status every 8 seconds
     const interval = setInterval(() => {
-      refreshState();
+      if (currentUser) {
+        refreshState();
+      }
       checkBackendOracle();
     }, 8000);
     
     return () => clearInterval(interval);
-  }, [account]);
+  }, [account, currentUser]);
+
+  const handleLogout = () => {
+    localStorage.removeItem("greengrid_user");
+    setCurrentUser(null);
+    setAccount(null);
+    setSigner(null);
+    toast.info("Logged out successfully.");
+  };
+
+  const handleLogin = (username: string) => {
+    localStorage.setItem("greengrid_user", username);
+    setCurrentUser(username);
+  };
+
+  if (!currentUser) {
+    return <Login onLogin={handleLogin} />;
+  }
 
   return (
     <div className="min-h-screen text-foreground">
-      <Navbar account={account} balanceGC={balanceGC} onConnect={handleConnect} />
+      <Navbar 
+        account={account} 
+        balanceGC={balanceGC} 
+        onConnect={handleConnect} 
+        currentUser={currentUser}
+        onLogout={handleLogout}
+      />
       
       <main className="mx-auto max-w-[1500px] space-y-5 px-5 pb-10 pt-6">
         
+        {/* Wallet Mismatch Warning Banner */}
+        {walletMismatch && (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-[0_0_15px_rgba(239,68,68,0.15)] animate-pulse">
+            <div className="flex items-center gap-3">
+              <ShieldCheck className="h-5 w-5 text-red-500 shrink-0" />
+              <div>
+                <span className="font-semibold block">MetaMask Wallet Mismatch!</span>
+                <span className="text-xs text-muted-foreground">
+                  You are logged in as <strong className="text-foreground">{currentUser}</strong>, which is locked to wallet <strong className="font-[JetBrains_Mono] text-foreground">{localStorage.getItem(`greengrid_wallet_${currentUser}`)}</strong>. However, MetaMask is currently on account <strong className="font-[JetBrains_Mono] text-foreground">{account}</strong>.
+                </span>
+              </div>
+            </div>
+            <div className="text-xs font-medium bg-red-500/20 px-3 py-1.5 rounded-lg border border-red-500/30">
+              Please switch accounts in MetaMask
+            </div>
+          </div>
+        )}
+
         {/* Connection/Oracle Alert */}
         {!oracleStatus && (
           <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-400 flex items-center justify-between">
@@ -277,6 +417,7 @@ export function Dashboard() {
               suggestedPrice={minPrice[0]} 
               onSuccess={() => refreshState()} 
               onConnect={handleConnect}
+              walletMismatch={walletMismatch}
             />
             <ActionCard
               minPrice={minPrice[0]}
@@ -298,6 +439,7 @@ export function Dashboard() {
           signer={signer} 
           account={account} 
           onSuccess={() => refreshState()}
+          walletMismatch={walletMismatch}
         />
 
       </main>
@@ -308,11 +450,15 @@ export function Dashboard() {
 function Navbar({ 
   account, 
   balanceGC, 
-  onConnect 
+  onConnect,
+  currentUser,
+  onLogout
 }: { 
   account: string | null; 
   balanceGC: string; 
   onConnect: () => void;
+  currentUser: string | null;
+  onLogout: () => void;
 }) {
   return (
     <header className="sticky top-0 z-30 border-b border-white/5 backdrop-blur-xl bg-background/60">
@@ -347,6 +493,21 @@ function Navbar({
         </nav>
 
         <div className="flex items-center gap-2">
+          {currentUser && (
+            <div className="flex items-center gap-2 glass-panel px-3 py-1.5 text-xs">
+              <span className="text-muted-foreground">User:</span>
+              <span className="font-semibold text-glow-green">{currentUser}</span>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={onLogout}
+                className="h-6 px-2 hover:bg-white/5 text-red-400 hover:text-red-300 font-medium rounded text-[11px]"
+              >
+                Log Out
+              </Button>
+            </div>
+          )}
+
           {account && (
             <div className="hidden sm:flex items-center gap-2 glass-panel px-3 py-2 font-[JetBrains_Mono] text-xs">
               <Coins className="h-4 w-4 text-glow-green" />
@@ -361,7 +522,7 @@ function Navbar({
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--neon-green)] opacity-70"></span>
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--neon-green)]"></span>
               </span>
-              <Wallet className="h-4 w-4 text-glow-cyan" />
+              <Wallet className="h-4 w-4 text-glow-cyan" strokeWidth={2.5} />
               <span className="font-[JetBrains_Mono]">{truncateAddress(account)}</span>
             </div>
           ) : (
@@ -531,13 +692,15 @@ function QuickTrade({
   account, 
   suggestedPrice, 
   onSuccess,
-  onConnect
+  onConnect,
+  walletMismatch
 }: { 
   signer: ethers.Signer | null; 
   account: string | null;
   suggestedPrice: number; 
   onSuccess: () => void;
   onConnect: () => void;
+  walletMismatch?: boolean;
 }) {
   const [side, setSide] = useState<"sell" | "buy">("sell");
   const [amount, setAmount] = useState("5.0");
@@ -554,6 +717,7 @@ function QuickTrade({
   const accentClass = isSell ? "text-glow-green" : "text-glow-cyan";
 
   const handleSubmit = async () => {
+    if (walletMismatch) return;
     if (!account || !signer) {
       onConnect();
       return;
@@ -567,7 +731,7 @@ function QuickTrade({
     setLoading(true);
     try {
       if (isSell) {
-        toast.info("1. Approvng GreenCoin token spend in MetaMask...");
+        toast.info("1. Approving GreenCoin token spend in MetaMask...");
         const receipt = await createListing(signer, amount, price);
         toast.success("✔ Energy listed successfully on the blockchain!");
         onSuccess();
@@ -677,7 +841,7 @@ function QuickTrade({
 
       {isSell && (
         <Button
-          disabled={loading}
+          disabled={loading || walletMismatch}
           onClick={handleSubmit}
           className="mt-4 h-12 w-full text-base font-semibold text-background hover:opacity-90 disabled:opacity-50"
           style={{
@@ -691,6 +855,8 @@ function QuickTrade({
             <span className="flex items-center gap-2">
               <RefreshCw className="h-4 w-4 animate-spin" /> Processing...
             </span>
+          ) : walletMismatch ? (
+            "Wallet Mismatch - Switch MetaMask Account"
           ) : account ? (
             "Sign & Escrow Excess Energy"
           ) : (
@@ -948,18 +1114,21 @@ function ActiveListings({
   loading,
   signer,
   account,
-  onSuccess
+  onSuccess,
+  walletMismatch
 }: {
   listings: Listing[];
   loading: boolean;
   signer: ethers.Signer | null;
   account: string | null;
   onSuccess: () => void;
+  walletMismatch?: boolean;
 }) {
   const [processingId, setProcessingId] = useState<number | null>(null);
 
   // Buy listing handler
   const handleBuy = async (listingId: number, totalCostMatic: string) => {
+    if (walletMismatch) return;
     if (!signer) {
       toast.error("Please connect your wallet first!");
       return;
@@ -980,6 +1149,7 @@ function ActiveListings({
 
   // Oracle settlement handler
   const handleSettle = async (listingId: number) => {
+    if (walletMismatch) return;
     setProcessingId(listingId);
     try {
       toast.info("Invoking Backend Oracle API to verify energy delivery...");
@@ -995,6 +1165,7 @@ function ActiveListings({
 
   // Oracle abort handler
   const handleAbort = async (listingId: number) => {
+    if (walletMismatch) return;
     setProcessingId(listingId);
     try {
       toast.info("Invoking Backend Oracle API to cancel trade and trigger refunds...");
@@ -1012,29 +1183,28 @@ function ActiveListings({
     <div className="glass-panel p-6 mt-6">
       <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-4">
         <div>
-          <h3 className="font-[Space_Grotesk] text-xl font-bold text-glow-green">GreenGrid P2P Marketplace</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Explore active energy offers and confirm smart contract delivery</p>
+          <h3 className="font-[Space_Grotesk] text-lg font-semibold">GreenGrid P2P Marketplace</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">Active electricity listings and oracle operations on Polygon Amoy</p>
         </div>
         <Button 
           variant="outline" 
+          size="sm" 
           onClick={onSuccess} 
-          className="border-white/10 bg-white/[0.02] hover:bg-white/5 text-xs h-8 px-2 flex items-center gap-1.5"
+          disabled={loading}
+          className="border-white/5 hover:bg-white/5 text-xs h-8 px-2.5 rounded-lg flex items-center gap-1.5"
         >
-          <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
-          Refresh
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh listings
         </Button>
       </div>
 
       {loading && listings.length === 0 ? (
-        <div className="py-10 text-center text-muted-foreground flex flex-col items-center gap-2">
-          <RefreshCw className="h-6 w-6 animate-spin text-[var(--neon-green)]" />
-          <span className="text-sm">Fetching on-chain marketplace listings...</span>
+        <div className="flex flex-col items-center justify-center py-10 text-muted-foreground text-sm">
+          <RefreshCw className="h-6 w-6 animate-spin mb-2 text-glow-green" />
+          Fetching active listings from contract...
         </div>
       ) : listings.length === 0 ? (
-        <div className="py-10 text-center text-muted-foreground border border-dashed border-white/5 rounded-xl">
-          <Sun className="h-8 w-8 mx-auto text-muted-foreground/30 mb-2" />
-          <p className="text-sm">No active listings found on the blockchain.</p>
-          <p className="text-xs text-muted-foreground/70 mt-1">Use the "Quick Trade" panel to list some excess solar energy!</p>
+        <div className="text-center py-10 text-muted-foreground text-sm">
+          No energy listings active on-chain right now.
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -1085,7 +1255,7 @@ function ActiveListings({
                     <td className="py-4 px-4 text-right">
                       {l.isActive && !l.isMatched && (
                         <Button
-                          disabled={processingId === l.id || isSeller}
+                          disabled={processingId === l.id || isSeller || walletMismatch}
                           onClick={() => handleBuy(l.id, totalCost)}
                           size="sm"
                           className="bg-glow-cyan/10 hover:bg-glow-cyan/20 text-glow-cyan text-[10px] font-semibold uppercase px-3 py-1 rounded-lg border border-[var(--neon-cyan)]/20"
@@ -1097,7 +1267,7 @@ function ActiveListings({
                       {l.isMatched && !l.isSettled && (
                         <div className="flex gap-1 justify-end">
                           <Button
-                            disabled={processingId === l.id}
+                            disabled={processingId === l.id || walletMismatch}
                             onClick={() => handleSettle(l.id)}
                             size="sm"
                             className="bg-[var(--neon-green)] text-background hover:bg-[var(--neon-green)]/90 text-[10px] font-bold uppercase px-3 py-1 rounded-lg shadow-[var(--shadow-neon)]"
@@ -1105,7 +1275,7 @@ function ActiveListings({
                             Simulate Delivery
                           </Button>
                           <Button
-                            disabled={processingId === l.id}
+                            disabled={processingId === l.id || walletMismatch}
                             onClick={() => handleAbort(l.id)}
                             variant="destructive"
                             size="sm"
