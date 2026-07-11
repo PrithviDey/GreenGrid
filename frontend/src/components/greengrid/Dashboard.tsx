@@ -27,6 +27,7 @@ import { EnergyMap } from "./EnergyMap";
 import { toast } from "sonner";
 import { ethers } from "ethers";
 import { Login } from "./Login";
+import { MarketplaceView, ContractsView, AnalyticsView } from "./MarketplaceView";
 
 // Import Web3 Helpers
 import {
@@ -93,6 +94,7 @@ export function Dashboard() {
   const [minPrice, setMinPrice] = useState<number[]>([1.8]);
   const [autoTrade, setAutoTrade] = useState(true);
   const [feed, setFeed] = useState<Tx[]>([]);
+  const [activeTab, setActiveTab] = useState<string>("grid");
   
   // User Authentication state
   const [currentUser, setCurrentUser] = useState<string | null>(() => {
@@ -361,6 +363,8 @@ export function Dashboard() {
         onConnect={handleConnect} 
         currentUser={currentUser}
         onLogout={handleLogout}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
       />
       
       <main className="mx-auto max-w-[1500px] space-y-5 px-5 pb-10 pt-6">
@@ -393,54 +397,77 @@ export function Dashboard() {
           </div>
         )}
 
-        {/* Row 1: Map full width */}
-        <EnergyMap account={account} netFlow={netFlow} />
+        {activeTab === "grid" && (
+          <>
+            {/* Row 1: Map full width */}
+            <EnergyMap account={account} netFlow={netFlow} />
 
-        {/* Row 2: Stats + QuickTrade + Ledger */}
-        <div className="grid grid-cols-12 gap-5">
-          <aside className="col-span-12 lg:col-span-4 space-y-5">
-            <LiveStats 
-              generation={simGen} 
-              consumption={simCon} 
-              netFlow={netFlow} 
-              hour={simHour} 
-              genHistory={genHistory}
-              conHistory={conHistory}
-            />
-            <EnvCard account={account} onSuccess={() => refreshState()} />
-          </aside>
+            {/* Row 2: Stats + QuickTrade + Ledger */}
+            <div className="grid grid-cols-12 gap-5">
+              <aside className="col-span-12 lg:col-span-4 space-y-5">
+                <LiveStats 
+                  generation={simGen} 
+                  consumption={simCon} 
+                  netFlow={netFlow} 
+                  hour={simHour} 
+                  genHistory={genHistory}
+                  conHistory={conHistory}
+                />
+                <EnvCard account={account} onSuccess={() => refreshState()} />
+              </aside>
 
-          <section className="col-span-12 lg:col-span-5 space-y-5">
-            <QuickTrade 
+              <section className="col-span-12 lg:col-span-5 space-y-5">
+                <QuickTrade 
+                  signer={signer} 
+                  account={account} 
+                  suggestedPrice={minPrice[0]} 
+                  onSuccess={() => refreshState()} 
+                  onConnect={handleConnect}
+                  walletMismatch={walletMismatch}
+                />
+                <ActionCard
+                  minPrice={minPrice[0]}
+                  onMinPrice={(v) => setMinPrice(v)}
+                  autoTrade={autoTrade}
+                  setAutoTrade={setAutoTrade}
+                />
+              </section>
+
+              <aside className="col-span-12 lg:col-span-3">
+                <Ledger feed={feed} />
+              </aside>
+            </div>
+
+            {/* Row 3: Active Listings/Marketplace */}
+            <ActiveListings 
+              listings={listings} 
+              loading={loadingListings} 
               signer={signer} 
               account={account} 
-              suggestedPrice={minPrice[0]} 
-              onSuccess={() => refreshState()} 
-              onConnect={handleConnect}
+              onSuccess={() => refreshState()}
               walletMismatch={walletMismatch}
             />
-            <ActionCard
-              minPrice={minPrice[0]}
-              onMinPrice={(v) => setMinPrice(v)}
-              autoTrade={autoTrade}
-              setAutoTrade={setAutoTrade}
-            />
-          </section>
+          </>
+        )}
 
-          <aside className="col-span-12 lg:col-span-3">
-            <Ledger feed={feed} />
-          </aside>
-        </div>
+        {activeTab === "market" && (
+          <MarketplaceView
+            listings={listings}
+            loading={loadingListings}
+            signer={signer}
+            account={account}
+            onSuccess={() => refreshState()}
+            walletMismatch={walletMismatch}
+          />
+        )}
 
-        {/* Row 3: Active Listings/Marketplace */}
-        <ActiveListings 
-          listings={listings} 
-          loading={loadingListings} 
-          signer={signer} 
-          account={account} 
-          onSuccess={() => refreshState()}
-          walletMismatch={walletMismatch}
-        />
+        {activeTab === "contracts" && (
+          <ContractsView />
+        )}
+
+        {activeTab === "analytics" && (
+          <AnalyticsView />
+        )}
 
       </main>
     </div>
@@ -452,13 +479,17 @@ function Navbar({
   balanceGC, 
   onConnect,
   currentUser,
-  onLogout
+  onLogout,
+  activeTab,
+  setActiveTab
 }: { 
   account: string | null; 
   balanceGC: string; 
   onConnect: () => void;
   currentUser: string | null;
   onLogout: () => void;
+  activeTab: string;
+  setActiveTab: (tab: string) => void;
 }) {
   return (
     <header className="sticky top-0 z-30 border-b border-white/5 backdrop-blur-xl bg-background/60">
@@ -478,18 +509,23 @@ function Navbar({
         </div>
 
         <nav className="hidden md:flex items-center gap-1 rounded-full glass-panel px-1.5 py-1.5 text-sm">
-          {["Grid", "Market", "Contracts", "Analytics"].map((n, i) => (
-            <button
-              key={n}
-              className={`rounded-full px-4 py-1.5 transition ${
-                i === 0
-                  ? "bg-white/8 text-glow-green"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {n}
-            </button>
-          ))}
+          {["Grid", "Market", "Contracts", "Analytics"].map((n) => {
+            const tabKey = n.toLowerCase();
+            const isActive = activeTab === tabKey;
+            return (
+              <button
+                key={n}
+                onClick={() => setActiveTab(tabKey)}
+                className={`rounded-full px-4 py-1.5 transition font-semibold ${
+                  isActive
+                    ? "bg-white/10 text-glow-green shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {n}
+              </button>
+            );
+          })}
         </nav>
 
         <div className="flex items-center gap-2">
