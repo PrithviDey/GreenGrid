@@ -195,6 +195,38 @@ export function Dashboard() {
     }
   };
 
+  // Switch Wallet handler
+  const handleSwitchWallet = async () => {
+    try {
+      if (!window.ethereum) {
+        toast.error("MetaMask is not installed.");
+        return;
+      }
+      
+      toast.info("Requesting account switch in MetaMask...");
+      // Request permissions to trigger account select popup
+      await window.ethereum.request({
+        method: "wallet_requestPermissions",
+        params: [{ eth_accounts: {} }]
+      });
+      
+      const wallet = await connectWallet();
+      
+      if (currentUser) {
+        // Link the new wallet address to the current user
+        localStorage.setItem(`greengrid_wallet_${currentUser}`, wallet.address);
+        toast.success(`Updated linked wallet for ${currentUser} to ${truncateAddress(wallet.address)}`);
+      }
+
+      setAccount(wallet.address);
+      setSigner(wallet.signer);
+      refreshState(wallet.address);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Failed to switch wallet");
+    }
+  };
+
   // Refresh Web3 balances and on-chain listings
   const refreshState = async (addr?: string) => {
     const activeAddr = addr || account;
@@ -543,6 +575,7 @@ export function Dashboard() {
         account={account} 
         balanceGC={balanceGC} 
         onConnect={handleConnect} 
+        onSwitchWallet={handleSwitchWallet}
         currentUser={currentUser}
         onLogout={handleLogout}
         activeTab={activeTab}
@@ -661,6 +694,7 @@ function Navbar({
   account, 
   balanceGC, 
   onConnect,
+  onSwitchWallet,
   currentUser,
   onLogout,
   activeTab,
@@ -669,6 +703,7 @@ function Navbar({
   account: string | null; 
   balanceGC: string; 
   onConnect: () => void;
+  onSwitchWallet: () => void;
   currentUser: string | null;
   onLogout: () => void;
   activeTab: string;
@@ -736,14 +771,19 @@ function Navbar({
           )}
           
           {account ? (
-            <div className="flex items-center gap-2 glass-panel px-3 py-2 text-xs">
+            <button 
+              onClick={onSwitchWallet}
+              className="flex items-center gap-2 glass-panel px-3 py-2 text-xs transition duration-200 hover:bg-white/5 active:scale-95 group relative cursor-pointer"
+              title="Click to switch MetaMask account"
+            >
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--neon-green)] opacity-70"></span>
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--neon-green)]"></span>
               </span>
-              <Wallet className="h-4 w-4 text-glow-cyan" strokeWidth={2.5} />
-              <span className="font-[JetBrains_Mono]">{truncateAddress(account)}</span>
-            </div>
+              <Wallet className="h-4 w-4 text-glow-cyan group-hover:text-[var(--neon-green)] transition-colors" strokeWidth={2.5} />
+              <span className="font-[JetBrains_Mono] group-hover:text-[var(--neon-green)] transition-colors">{truncateAddress(account)}</span>
+              <span className="ml-1 text-[9px] uppercase tracking-wider text-muted-foreground group-hover:text-foreground transition-colors">(Switch)</span>
+            </button>
           ) : (
             <Button 
               onClick={onConnect}
