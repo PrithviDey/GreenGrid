@@ -193,7 +193,7 @@ export function Dashboard() {
         id: `chain-${l.id}`,
         kind: isBuyer ? "buy" : "sell",
         kwh: parseFloat(l.amount),
-        gc: parseFloat(l.amount),
+        gc: parseFloat((parseFloat(l.amount) * parseFloat(l.pricePerToken)).toFixed(6)),
         addr: isSeller ? truncateAddress(l.buyer) : truncateAddress(l.seller),
         ago: agoStr
       };
