@@ -102,6 +102,42 @@ export async function getListingsFromChain(): Promise<Listing[]> {
   }
 }
 
+// Helper to get gas overrides with a safety minimum of 30 Gwei for Polygon Amoy
+async function getGasOverrides(signer: ethers.Signer) {
+  try {
+    const provider = signer.provider;
+    if (!provider) throw new Error("No provider found on signer");
+    const feeData = await provider.getFeeData();
+    const minGasPrice = ethers.parseUnits("30", "gwei");
+    
+    if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+      let maxFee = feeData.maxFeePerGas;
+      let maxPriority = feeData.maxPriorityFeePerGas;
+      if (maxFee < minGasPrice) {
+        maxFee = minGasPrice;
+      }
+      if (maxPriority < minGasPrice) {
+        maxPriority = minGasPrice;
+      }
+      return {
+        maxFeePerGas: maxFee,
+        maxPriorityFeePerGas: maxPriority
+      };
+    } else {
+      let gasPrice = feeData.gasPrice || minGasPrice;
+      if (gasPrice < minGasPrice) {
+        gasPrice = minGasPrice;
+      }
+      return { gasPrice };
+    }
+  } catch (e) {
+    console.warn("Failed to fetch gas data, using 35 Gwei default override:", e);
+    return {
+      gasPrice: ethers.parseUnits("35", "gwei")
+    };
+  }
+}
+
 // Seller lists energy
 export async function createListing(signer: ethers.Signer, amountKwh: string, pricePerKwh: string) {
   const gcContract = new ethers.Contract(GREEN_COIN_ADDRESS, GREEN_COIN_ABI, signer);
@@ -110,12 +146,14 @@ export async function createListing(signer: ethers.Signer, amountKwh: string, pr
   const amountWei = ethers.parseEther(amountKwh);
   const priceWei = ethers.parseEther(pricePerKwh);
   
+  const overrides = await getGasOverrides(signer);
+  
   // 1. Approve EnergyTrading contract to spend GreenCoins
-  const approveTx = await gcContract.approve(ENERGY_TRADING_ADDRESS, amountWei);
+  const approveTx = await gcContract.approve(ENERGY_TRADING_ADDRESS, amountWei, overrides);
   await approveTx.wait();
   
   // 2. Call listEnergy
-  const listTx = await tradingContract.listEnergy(amountWei, priceWei);
+  const listTx = await tradingContract.listEnergy(amountWei, priceWei, overrides);
   const receipt = await listTx.wait();
   return receipt;
 }
@@ -123,7 +161,8 @@ export async function createListing(signer: ethers.Signer, amountKwh: string, pr
 // Seller cancels listing
 export async function cancelEnergyListing(signer: ethers.Signer, listingId: number) {
   const contract = new ethers.Contract(ENERGY_TRADING_ADDRESS, ENERGY_TRADING_ABI, signer);
-  const tx = await contract.cancelListing(BigInt(listingId));
+  const overrides = await getGasOverrides(signer);
+  const tx = await contract.cancelListing(BigInt(listingId), overrides);
   const receipt = await tx.wait();
   return receipt;
 }
@@ -132,8 +171,9 @@ export async function cancelEnergyListing(signer: ethers.Signer, listingId: numb
 export async function buyEnergyListing(signer: ethers.Signer, listingId: number, totalCostMatic: string) {
   const contract = new ethers.Contract(ENERGY_TRADING_ADDRESS, ENERGY_TRADING_ABI, signer);
   const valueWei = ethers.parseEther(totalCostMatic);
+  const overrides = await getGasOverrides(signer);
   
-  const tx = await contract.buyEnergy(BigInt(listingId), { value: valueWei });
+  const tx = await contract.buyEnergy(BigInt(listingId), { ...overrides, value: valueWei });
   const receipt = await tx.wait();
   return receipt;
 }
