@@ -189,5 +189,26 @@
   100% { transform: translateY(0); opacity: 1; }
 }
 
-.dash-flow { animation: dash-flow 1.2s linear infinite; }
-.pulse-glow { animation: pulse-glow 2.4s ease-in-out infinite; }
+/* Energy map directional flow animations */
+/* Exporting: particles travel FROM house TOWARD grid (dashoffset decreases → forward motion) */
+@keyframes energy-flow-out {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -60; }
+}
+/* Importing: particles travel FROM grid TOWARD house (dashoffset increases → reverse motion) */
+@keyframes energy-flow-in {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: 60; }
+}
+/* Pulsing outer ring for user house when active */
+@keyframes energy-pulse-ring {
+  0%   { opacity: 0.5; r: 4px; }
+  50%  { opacity: 0.15; }
+  100% { opacity: 0.5; }
+}
+
+.dash-flow        { animation: dash-flow 1.2s linear infinite; }
+.pulse-glow       { animation: pulse-glow 2.4s ease-in-out infinite; }
+.energy-flow-out  { animation: energy-flow-out 1.4s linear infinite; }
+.energy-flow-in   { animation: energy-flow-in 1.4s linear infinite; }
+.energy-pulse-ring { animation: energy-pulse-ring 2s ease-in-out infinite; }
