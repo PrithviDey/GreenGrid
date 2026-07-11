@@ -1,6 +1,4 @@
-import { useEffect, useRef } from "react";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
+// EnergyMap — hub-and-spoke grid topology with animated energy flows
 type NodeRole = "exporting" | "importing" | "idle";
 
 interface GridNode {
@@ -9,79 +7,56 @@ interface GridNode {
   shortAddr: string;
   role: NodeRole;
   kwh: string;
-  x: number; // SVG coordinate 0–1000
-  y: number; // SVG coordinate 0–560
+  x: number;
+  y: number;
   isUser?: boolean;
-  isGrid?: boolean;
 }
 
-// ─── Static neighborhood layout ──────────────────────────────────────────────
-// Central grid hub at (500, 280). User house at (500, 110).
-// Neighbors arranged around the hub.
+/* ── Layout: SVG 1100 × 620 ──────────────────────────────────────────────────
+   Grid hub at (550, 310). User house top-centre at (550, 90).
+   Six neighbours evenly spread around the hub at ~230px radius.           */
 const STATIC_NODES: GridNode[] = [
-  // Neighbor houses — fixed roles for the demo
-  { id: "n1", label: "House A",  shortAddr: "0x89F...7C2", role: "exporting", kwh: "3.2", x: 180,  y: 80  },
-  { id: "n2", label: "House B",  shortAddr: "0x41A...9E8", role: "importing", kwh: "1.8", x: 820,  y: 80  },
-  { id: "n3", label: "House C",  shortAddr: "0xB0D...1F4", role: "idle",      kwh: "0.0", x: 100,  y: 310 },
-  { id: "n4", label: "House D",  shortAddr: "0x77E...50b", role: "exporting", kwh: "4.5", x: 900,  y: 310 },
-  { id: "n5", label: "House E",  shortAddr: "0x9E8...8Cc", role: "importing", kwh: "2.1", x: 220,  y: 480 },
-  { id: "n6", label: "House F",  shortAddr: "0xC3A...Fd5", role: "idle",      kwh: "0.0", x: 780,  y: 480 },
+  { id: "n1", label: "House A", shortAddr: "0x89F...7C2", role: "exporting", kwh: "3.2", x: 200,  y: 95  },
+  { id: "n2", label: "House B", shortAddr: "0x41A...9E8", role: "importing", kwh: "1.8", x: 900,  y: 95  },
+  { id: "n3", label: "House C", shortAddr: "0xB0D...1F4", role: "idle",      kwh: "0.0", x: 80,   y: 340 },
+  { id: "n4", label: "House D", shortAddr: "0x77E...50b", role: "exporting", kwh: "4.5", x: 1020, y: 340 },
+  { id: "n5", label: "House E", shortAddr: "0x9E8...8Cc", role: "importing", kwh: "2.1", x: 200,  y: 530 },
+  { id: "n6", label: "House F", shortAddr: "0xC3A...Fd5", role: "idle",      kwh: "0.0", x: 900,  y: 530 },
 ];
 
-const GRID_NODE: GridNode = {
-  id: "grid", label: "Utility Grid", shortAddr: "grid.amoy.io",
-  role: "idle", kwh: "0", x: 500, y: 290, isGrid: true,
-};
+const GX = 550, GY = 310; // Grid hub centre
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-const GREEN  = "rgba(74,222,128,";   // neon green with alpha
-const CYAN   = "rgba(34,211,238,";   // neon cyan with alpha
-const DIM    = "rgba(255,255,255,";  // neutral for idle
+const G  = "rgba(74,222,128,";
+const C  = "rgba(34,211,238,";
+const DIM = "rgba(255,255,255,";
 
-function roleColor(role: NodeRole, alpha = 0.9): string {
-  if (role === "exporting") return `${GREEN}${alpha})`;
-  if (role === "importing") return `${CYAN}${alpha})`;
-  return `${DIM}${alpha})`;
+const roleStroke = (r: NodeRole) =>
+  r === "exporting" ? `${G}0.95)` : r === "importing" ? `${C}0.95)` : `${DIM}0.07)`;
+
+const roleFill = (r: NodeRole) =>
+  r === "exporting" ? `${G}0.10)` : r === "importing" ? `${C}0.10)` : "rgba(14,20,30,0.85)";
+
+const roleBorder = (r: NodeRole) =>
+  r === "exporting" ? `${G}0.55)` : r === "importing" ? `${C}0.55)` : "rgba(255,255,255,0.09)";
+
+const roleText = (r: NodeRole) =>
+  r === "exporting" ? `${G}1)` : r === "importing" ? `${C}1)` : "rgba(255,255,255,0.35)";
+
+const roleLabel = (r: NodeRole, kwh: string) =>
+  r === "exporting" ? `↑ Export ${kwh} kWh` : r === "importing" ? `↓ Import ${kwh} kWh` : "● Idle";
+
+/* Cubic bezier path: node → grid, with a slight bow inward */
+function curveTo(nx: number, ny: number): string {
+  const mx = (nx + GX) / 2;
+  const my = (ny + GY) / 2;
+  const bow = 0.18;
+  const cx = mx + (GX - mx) * bow;
+  const cy = my + (GY - my) * bow;
+  return `M ${nx} ${ny} Q ${cx} ${cy} ${GX} ${GY}`;
 }
 
-function roleBg(role: NodeRole): string {
-  if (role === "exporting") return "rgba(74,222,128,0.12)";
-  if (role === "importing") return "rgba(34,211,238,0.12)";
-  return "rgba(255,255,255,0.04)";
-}
-
-function roleBorder(role: NodeRole): string {
-  if (role === "exporting") return "rgba(74,222,128,0.5)";
-  if (role === "importing") return "rgba(34,211,238,0.5)";
-  return "rgba(255,255,255,0.08)";
-}
-
-function roleLabel(role: NodeRole, kwh: string): string {
-  if (role === "exporting") return `↑ Exporting ${kwh} kWh`;
-  if (role === "importing") return `↓ Importing ${kwh} kWh`;
-  return "Idle";
-}
-
-// ─── Canvas-based animated flow line ─────────────────────────────────────────
-// We render the energy map inside an SVG so we can do animated stroke-dashoffset.
-
-function buildPath(x1: number, y1: number, x2: number, y2: number): string {
-  const mx = (x1 + x2) / 2;
-  const my = (y1 + y2) / 2;
-  // slight quadratic curve toward center
-  const cx = mx + (500 - mx) * 0.15;
-  const cy = my + (290 - my) * 0.15;
-  return `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`;
-}
-
-// ─── Component ───────────────────────────────────────────────────────────────
-export function EnergyMap({
-  account,
-  netFlow,
-}: {
-  account: string | null;
-  netFlow: number;
-}) {
+/* ── Main Component ──────────────────────────────────────────────────────── */
+export function EnergyMap({ account, netFlow }: { account: string | null; netFlow: number }) {
   const userRole: NodeRole = netFlow > 0.05 ? "exporting" : netFlow < -0.05 ? "importing" : "idle";
   const displayAddr = account
     ? `${account.substring(0, 6)}...${account.substring(account.length - 4)}`
@@ -89,122 +64,168 @@ export function EnergyMap({
 
   const userNode: GridNode = {
     id: "user", label: "My House", shortAddr: displayAddr,
-    role: userRole, kwh: Math.abs(netFlow).toFixed(2),
-    x: 500, y: 90, isUser: true,
+    role: userRole, kwh: Math.abs(netFlow).toFixed(2), x: 550, y: 90, isUser: true,
   };
 
-  // All nodes that connect to the grid hub
   const allNodes: GridNode[] = [...STATIC_NODES, userNode];
-
-  const SVG_W = 1000;
-  const SVG_H = 560;
+  const activeCount = allNodes.filter(n => n.role !== "idle").length;
 
   return (
     <div className="glass-panel relative overflow-hidden p-5">
       {/* Header */}
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-4">
         <div>
-          <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Energy Map</div>
+          <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Live Energy Map</div>
           <div className="mt-0.5 font-[Space_Grotesk] text-base font-semibold">
             Neighborhood Grid · Sector 14-B
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs">
-          <span
-            style={{ background: roleBg(userRole), border: `1px solid ${roleBorder(userRole)}`, color: roleColor(userRole) }}
-            className="rounded-full px-3 py-1 font-semibold font-[JetBrains_Mono] text-[11px]"
-          >
-            {userRole === "idle" ? "Idle — No Flow" : `${netFlow > 0 ? "+" : ""}${netFlow.toFixed(2)} kWh`}
-          </span>
-        </div>
+        <span
+          style={{ background: roleFill(userRole), border: `1px solid ${roleBorder(userRole)}`, color: roleText(userRole) }}
+          className="rounded-full px-3 py-1 font-semibold font-[JetBrains_Mono] text-[11px]"
+        >
+          {userRole === "idle" ? "Idle — No Flow" : `${netFlow > 0 ? "+" : ""}${netFlow.toFixed(2)} kWh`}
+        </span>
       </div>
 
-      {/* Background grid dots */}
+      {/* Dot-grid background */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.06]"
+        className="pointer-events-none absolute inset-0 opacity-[0.055]"
         style={{
-          backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.8) 1px, transparent 1px)",
-          backgroundSize: "28px 28px",
+          backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.9) 1px, transparent 1px)",
+          backgroundSize: "30px 30px",
         }}
       />
 
-      {/* SVG Map */}
-      <div className="relative" style={{ height: 420 }}>
+      {/* ── SVG canvas ── */}
+      <div className="relative" style={{ height: 500 }}>
         <svg
-          viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+          viewBox="0 0 1100 620"
           className="w-full h-full"
           preserveAspectRatio="xMidYMid meet"
           style={{ overflow: "visible" }}
         >
           <defs>
-            {/* Green glow filter */}
-            <filter id="glow-green" x="-50%" y="-50%" width="200%" height="200%">
+            {/* Strong neon glow filters */}
+            <filter id="fg" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur stdDeviation="6" result="b1" />
+              <feGaussianBlur stdDeviation="2" result="b2" in="SourceGraphic" />
+              <feMerge><feMergeNode in="b1" /><feMergeNode in="b2" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+            <filter id="fc" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur stdDeviation="6" result="b1" />
+              <feGaussianBlur stdDeviation="2" result="b2" in="SourceGraphic" />
+              <feMerge><feMergeNode in="b1" /><feMergeNode in="b2" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+            <filter id="fhub" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="8" result="blur" />
+              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+            <filter id="fnode" x="-40%" y="-40%" width="180%" height="180%">
               <feGaussianBlur stdDeviation="4" result="blur" />
               <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
             </filter>
-            {/* Cyan glow filter */}
-            <filter id="glow-cyan" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="4" result="blur" />
-              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-            </filter>
-            {/* Dim glow */}
-            <filter id="glow-dim" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="2" result="blur" />
-              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-            </filter>
-            {/* Grid hub gradient */}
-            <radialGradient id="hub-grad" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="rgba(74,222,128,0.25)" />
-              <stop offset="100%" stopColor="rgba(34,211,238,0.08)" />
+
+            {/* Hub radial gradient */}
+            <radialGradient id="hub-bg" cx="50%" cy="50%" r="50%">
+              <stop offset="0%"   stopColor="rgba(74,222,128,0.22)" />
+              <stop offset="60%"  stopColor="rgba(34,211,238,0.10)" />
+              <stop offset="100%" stopColor="rgba(0,0,0,0)" />
             </radialGradient>
+
+            {/* Line gradients for glow direction */}
+            <linearGradient id="lg-green" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%"   stopColor="rgba(74,222,128,0)" />
+              <stop offset="50%"  stopColor="rgba(74,222,128,1)" />
+              <stop offset="100%" stopColor="rgba(74,222,128,0)" />
+            </linearGradient>
+            <linearGradient id="lg-cyan" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%"   stopColor="rgba(34,211,238,0)" />
+              <stop offset="50%"  stopColor="rgba(34,211,238,1)" />
+              <stop offset="100%" stopColor="rgba(34,211,238,0)" />
+            </linearGradient>
           </defs>
 
-          {/* ── Connection lines from each neighbor to grid hub ── */}
+          {/* ── WIRES: 3-layer rendering for each connection ── */}
           {allNodes.map(node => {
-            const path = buildPath(node.x, node.y, GRID_NODE.x, GRID_NODE.y);
+            const d = curveTo(node.x, node.y);
             const isActive = node.role !== "idle";
-            const color = node.role === "exporting"
-              ? `${GREEN}0.85)` : node.role === "importing"
-              ? `${CYAN}0.85)` : `${DIM}0.06)`;
-            const filterId = node.role === "exporting" ? "glow-green"
-              : node.role === "importing" ? "glow-cyan" : "glow-dim";
-            // Exporting: flow goes FROM node TO grid (dashoffset decreases → particles move toward grid)
-            // Importing: flow goes FROM grid TO node
-            const animClass = isActive
-              ? (node.role === "exporting" ? "energy-flow-out" : "energy-flow-in")
-              : "";
+            const isOut = node.role === "exporting";
+            const stroke = roleStroke(node.role);
+            const filterId = isOut ? "fg" : "fc";
+            const animCls = isActive ? (isOut ? "ef-out" : "ef-in") : "";
+            const animCls2 = isActive ? (isOut ? "ef-out2" : "ef-in2") : "";
+            const animCls3 = isActive ? (isOut ? "ef-out3" : "ef-in3") : "";
 
             return (
               <g key={node.id}>
-                {/* Static dim underline */}
-                <path
-                  d={path}
-                  stroke="rgba(255,255,255,0.05)"
-                  strokeWidth="2"
-                  fill="none"
-                />
-                {/* Animated flow line — only rendered when active */}
+                {/* Layer 0: static background wire */}
+                <path d={d} stroke="rgba(255,255,255,0.04)" strokeWidth="2.5" fill="none" />
+
+                {/* Layer 1: thick glow base (always shown when active, dim when idle) */}
                 {isActive && (
                   <path
-                    d={path}
-                    stroke={color}
-                    strokeWidth={node.isUser ? 3 : 2.5}
+                    d={d}
+                    stroke={stroke}
+                    strokeWidth="3"
                     fill="none"
-                    strokeDasharray="12 18"
+                    opacity="0.18"
+                  />
+                )}
+
+                {/* Layer 2: main dashed animated flow */}
+                {isActive && (
+                  <path
+                    d={d}
+                    stroke={stroke}
+                    strokeWidth={node.isUser ? 4 : 3}
+                    fill="none"
+                    strokeDasharray="16 24"
+                    strokeLinecap="round"
                     filter={`url(#${filterId})`}
-                    className={animClass}
-                    style={{ opacity: 0.9 }}
+                    className={animCls}
+                    opacity="0.95"
+                  />
+                )}
+
+                {/* Layer 3: faster, smaller dashes (staggered offset) */}
+                {isActive && (
+                  <path
+                    d={d}
+                    stroke={stroke}
+                    strokeWidth={node.isUser ? 2.5 : 2}
+                    fill="none"
+                    strokeDasharray="6 34"
+                    strokeLinecap="round"
+                    filter={`url(#${filterId})`}
+                    className={animCls2}
+                    opacity="0.75"
+                  />
+                )}
+
+                {/* Layer 4: bright leading dot */}
+                {isActive && (
+                  <path
+                    d={d}
+                    stroke={stroke}
+                    strokeWidth={node.isUser ? 6 : 5}
+                    fill="none"
+                    strokeDasharray="2 200"
+                    strokeLinecap="round"
+                    filter={`url(#${filterId})`}
+                    className={animCls3}
+                    opacity="1"
                   />
                 )}
               </g>
             );
           })}
 
-          {/* ── Central Utility Grid Hub ── */}
-          <GridHubNode node={GRID_NODE} />
+          {/* ── CENTRAL UTILITY GRID HUB ── */}
+          <HubNode />
 
-          {/* ── All house nodes ── */}
+          {/* ── HOUSE NODES ── */}
           {allNodes.map(node => (
             <HouseNode key={node.id} node={node} />
           ))}
@@ -213,171 +234,210 @@ export function EnergyMap({
 
       {/* Legend */}
       <div className="mt-3 flex flex-wrap items-center gap-5 text-[11px] text-muted-foreground border-t border-white/5 pt-3">
-        <span className="flex items-center gap-1.5">
-          <span className="h-0.5 w-6 rounded" style={{ background: `${GREEN}0.9)`, boxShadow: `0 0 6px ${GREEN}0.5)` }} />
+        <span className="flex items-center gap-2">
+          <span className="inline-flex gap-0.5">
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: `${G}1)`, boxShadow: `0 0 4px ${G}0.8)` }} />
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: `${G}1)`, boxShadow: `0 0 4px ${G}0.8)` }} />
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: `${G}1)`, boxShadow: `0 0 4px ${G}0.8)` }} />
+          </span>
           Exporting (Solar → Grid)
         </span>
-        <span className="flex items-center gap-1.5">
-          <span className="h-0.5 w-6 rounded" style={{ background: `${CYAN}0.9)`, boxShadow: `0 0 6px ${CYAN}0.5)` }} />
+        <span className="flex items-center gap-2">
+          <span className="inline-flex gap-0.5">
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: `${C}1)`, boxShadow: `0 0 4px ${C}0.8)` }} />
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: `${C}1)`, boxShadow: `0 0 4px ${C}0.8)` }} />
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: `${C}1)`, boxShadow: `0 0 4px ${C}0.8)` }} />
+          </span>
           Importing (Grid → House)
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-0.5 w-6 rounded bg-white/10" />
-          Idle — No Energy Flow
+          <span className="h-0.5 w-5 rounded bg-white/10" />
+          Idle — No Flow
         </span>
-        <span className="ml-auto font-[JetBrains_Mono]">
-          {STATIC_NODES.filter(n => n.role !== "idle").length + (userRole !== "idle" ? 1 : 0)} active flows · {allNodes.length + 1} nodes
+        <span className="ml-auto font-[JetBrains_Mono] text-[10px]">
+          {activeCount} active flows · {allNodes.length + 1} nodes
         </span>
       </div>
     </div>
   );
 }
 
-// ─── Grid Hub SVG Node ────────────────────────────────────────────────────────
-function GridHubNode({ node }: { node: GridNode }) {
-  const R = 48; // hexagon "radius"
-  // Regular hexagon points centered at node.x, node.y
+/* ── Hub Node (large hexagonal utility grid) ─────────────────────────────── */
+function HubNode() {
+  const R = 72; // larger hexagon
   const pts = Array.from({ length: 6 }, (_, i) => {
-    const angle = (Math.PI / 180) * (60 * i - 30);
-    return `${node.x + R * Math.cos(angle)},${node.y + R * Math.sin(angle)}`;
+    const a = (Math.PI / 3) * i - Math.PI / 6;
+    return `${GX + R * Math.cos(a)},${GY + R * Math.sin(a)}`;
+  }).join(" ");
+  const outerPts = Array.from({ length: 6 }, (_, i) => {
+    const a = (Math.PI / 3) * i - Math.PI / 6;
+    return `${GX + (R + 18) * Math.cos(a)},${GY + (R + 18) * Math.sin(a)}`;
   }).join(" ");
 
   return (
     <g>
-      {/* Outer glow ring */}
-      <circle cx={node.x} cy={node.y} r={R + 18} fill="url(#hub-grad)" opacity="0.6" />
-      <circle cx={node.x} cy={node.y} r={R + 8} fill="rgba(34,211,238,0.04)" stroke="rgba(34,211,238,0.12)" strokeWidth="1" />
-      {/* Hexagon body */}
-      <polygon
-        points={pts}
-        fill="rgba(15,20,30,0.95)"
-        stroke="rgba(74,222,128,0.4)"
-        strokeWidth="2"
-        filter="url(#glow-dim)"
+      {/* Ambient radial glow */}
+      <circle cx={GX} cy={GY} r={R + 55} fill="url(#hub-bg)" opacity="0.9" />
+
+      {/* Spinning outer hex ring */}
+      <polygon points={outerPts} fill="none"
+        stroke="rgba(74,222,128,0.18)" strokeWidth="1.5"
+        className="hub-spin" />
+      <polygon points={outerPts} fill="none"
+        stroke="rgba(34,211,238,0.12)" strokeWidth="1"
+        strokeDasharray="8 14"
+        className="hub-spin-rev" />
+
+      {/* Main hexagon */}
+      <polygon points={pts}
+        fill="rgba(10,16,24,0.96)"
+        stroke="rgba(74,222,128,0.55)"
+        strokeWidth="2.5"
+        filter="url(#fhub)"
       />
-      {/* Icon: lightning bolt SVG path */}
-      <text
-        x={node.x} y={node.y - 12}
-        textAnchor="middle" dominantBaseline="middle"
-        fontSize="22" fill="rgba(74,222,128,0.9)"
-      >⚡</text>
-      {/* Label */}
-      <text
-        x={node.x} y={node.y + 10}
-        textAnchor="middle"
-        fontSize="11"
-        fontWeight="700"
-        fontFamily="Space Grotesk, sans-serif"
-        fill="rgba(255,255,255,0.9)"
-      >
+
+      {/* Inner hex accent */}
+      {(() => {
+        const rInner = R * 0.62;
+        const innerPts = Array.from({ length: 6 }, (_, i) => {
+          const a = (Math.PI / 3) * i - Math.PI / 6;
+          return `${GX + rInner * Math.cos(a)},${GY + rInner * Math.sin(a)}`;
+        }).join(" ");
+        return <polygon points={innerPts} fill="none" stroke="rgba(34,211,238,0.2)" strokeWidth="1" />;
+      })()}
+
+      {/* ⚡ icon */}
+      <text x={GX} y={GY - 16} textAnchor="middle" dominantBaseline="middle" fontSize="34">⚡</text>
+
+      {/* "Utility Grid" label */}
+      <text x={GX} y={GY + 18} textAnchor="middle"
+        fontSize="13.5" fontWeight="800" fontFamily="Space Grotesk, sans-serif"
+        fill="rgba(255,255,255,0.95)">
         Utility Grid
       </text>
-      <text
-        x={node.x} y={node.y + 24}
-        textAnchor="middle"
-        fontSize="8"
-        fontFamily="JetBrains Mono, monospace"
-        fill="rgba(255,255,255,0.35)"
-      >
+      <text x={GX} y={GY + 34} textAnchor="middle"
+        fontSize="9" fontFamily="JetBrains Mono, monospace"
+        fill="rgba(255,255,255,0.32)">
         grid.amoy.io
       </text>
+
+      {/* Pulsing hub ring */}
+      <circle cx={GX} cy={GY} r={R + 8}
+        fill="none" stroke="rgba(74,222,128,0.25)" strokeWidth="2"
+        className="hub-pulse" />
     </g>
   );
 }
 
-// ─── House SVG Node ───────────────────────────────────────────────────────────
+/* ── House Node (large card) ─────────────────────────────────────────────── */
 function HouseNode({ node }: { node: GridNode }) {
-  const W = node.isUser ? 130 : 110;
-  const H = node.isUser ? 86 : 74;
+  const W = node.isUser ? 160 : 140;
+  const H = node.isUser ? 110 : 96;
   const rx = W / 2;
   const ry = H / 2;
 
-  const borderColor = node.isUser
-    ? (node.role === "exporting" ? "rgba(74,222,128,0.7)"
-      : node.role === "importing" ? "rgba(34,211,238,0.7)"
-      : "rgba(255,255,255,0.2)")
+  const border = node.isUser
+    ? (node.role === "exporting" ? `${G}0.75)` : node.role === "importing" ? `${C}0.75)` : "rgba(255,255,255,0.22)")
     : roleBorder(node.role);
 
-  const bgColor = node.isUser
-    ? (node.role === "exporting" ? "rgba(74,222,128,0.12)"
-      : node.role === "importing" ? "rgba(34,211,238,0.10)"
-      : "rgba(255,255,255,0.04)")
-    : "rgba(12,17,26,0.92)";
+  const bg = node.isUser
+    ? (node.role === "exporting" ? `${G}0.13)` : node.role === "importing" ? `${C}0.13)` : "rgba(255,255,255,0.04)")
+    : "rgba(11,16,26,0.93)";
 
-  const accentColor = roleColor(node.role, 0.9);
-  const filterId = node.role === "exporting" ? "glow-green"
-    : node.role === "importing" ? "glow-cyan" : undefined;
+  const accent = roleText(node.role);
+  const filterId = node.role !== "idle" ? (node.role === "exporting" ? "fg" : "fc") : "fnode";
 
-  // House emoji or user marker
-  const emoji = node.isUser ? "🏠" : node.role === "exporting" ? "☀️" : node.role === "importing" ? "🔌" : "🏡";
+  const emoji = node.isUser
+    ? (node.role === "exporting" ? "🏠☀️" : node.role === "importing" ? "🏠🔌" : "🏠")
+    : node.role === "exporting" ? "☀️" : node.role === "importing" ? "🔌" : "🏡";
+
+  const iconSize = node.isUser ? 26 : 22;
 
   return (
-    <g filter={filterId ? `url(#${filterId})` : undefined}>
-      {/* Card background */}
-      <rect
-        x={node.x - rx} y={node.y - ry}
-        width={W} height={H}
-        rx="10" ry="10"
-        fill={bgColor}
-        stroke={borderColor}
-        strokeWidth={node.isUser ? 2 : 1.5}
-      />
-
-      {/* "YOU" pulse ring for user node */}
-      {node.isUser && node.role !== "idle" && (
+    <g filter={`url(#${filterId})`}>
+      {/* Outer glow halo for active nodes */}
+      {node.role !== "idle" && (
         <rect
-          x={node.x - rx - 4} y={node.y - ry - 4}
-          width={W + 8} height={H + 8}
-          rx="14" ry="14"
+          x={node.x - rx - 6} y={node.y - ry - 6}
+          width={W + 12} height={H + 12}
+          rx="18" ry="18"
           fill="none"
-          stroke={accentColor}
-          strokeWidth="1.5"
-          opacity="0.35"
-          className="energy-pulse-ring"
+          stroke={node.role === "exporting" ? `${G}0.2)` : `${C}0.2)`}
+          strokeWidth="2"
+          className={node.isUser ? "node-pulse-user" : "node-pulse"}
         />
       )}
 
-      {/* Emoji icon */}
-      <text x={node.x - rx + 14} y={node.y} textAnchor="middle" dominantBaseline="middle" fontSize={node.isUser ? 18 : 15}>
-        {emoji}
-      </text>
+      {/* Card */}
+      <rect
+        x={node.x - rx} y={node.y - ry}
+        width={W} height={H}
+        rx="14" ry="14"
+        fill={bg}
+        stroke={border}
+        strokeWidth={node.isUser ? 2.5 : 2}
+      />
 
-      {/* House label */}
+      {/* Subtle inner highlight line at top */}
+      <rect
+        x={node.x - rx + 8} y={node.y - ry + 1}
+        width={W - 16} height={3}
+        rx="2"
+        fill={node.role === "exporting" ? `${G}0.4)` : node.role === "importing" ? `${C}0.4)` : "rgba(255,255,255,0.06)"}
+      />
+
+      {/* Icon row */}
       <text
-        x={node.x - rx + 28} y={node.y - 14}
-        fontSize={node.isUser ? 11 : 9.5}
-        fontWeight="700"
+        x={node.x - rx + iconSize / 2 + 8}
+        y={node.y - ry + 30}
+        textAnchor="middle" dominantBaseline="middle"
+        fontSize={iconSize}
+      >{emoji}</text>
+
+      {/* Name */}
+      <text
+        x={node.x - rx + iconSize + 18}
+        y={node.y - ry + 22}
+        fontSize={node.isUser ? 13 : 11.5}
+        fontWeight="800"
         fontFamily="Space Grotesk, sans-serif"
-        fill={node.isUser ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.8)"}
+        fill="rgba(255,255,255,0.95)"
       >
         {node.isUser ? "My House" : node.label}
       </text>
 
       {/* Address */}
       <text
-        x={node.x - rx + 28} y={node.y - 1}
-        fontSize="7.5"
+        x={node.x - rx + iconSize + 18}
+        y={node.y - ry + 38}
+        fontSize="8.5"
         fontFamily="JetBrains Mono, monospace"
-        fill="rgba(255,255,255,0.3)"
+        fill="rgba(255,255,255,0.28)"
       >
         {node.shortAddr}
       </text>
 
-      {/* Status badge */}
+      {/* Divider */}
+      <line
+        x1={node.x - rx + 10} y1={node.y - ry + 50}
+        x2={node.x + rx - 10} y2={node.y - ry + 50}
+        stroke="rgba(255,255,255,0.06)" strokeWidth="1"
+      />
+
+      {/* Status pill */}
       <rect
-        x={node.x - rx + 8} y={node.y + 16}
-        width={W - 16} height={16}
-        rx="4"
-        fill={roleBg(node.role)}
+        x={node.x - rx + 10} y={node.y - ry + 56}
+        width={W - 20} height={H - 70}
+        rx="8" ry="8"
+        fill={roleFill(node.role)}
       />
       <text
-        x={node.x} y={node.y + 24}
-        textAnchor="middle"
-        dominantBaseline="middle"
-        fontSize="7.5"
-        fontWeight="600"
+        x={node.x} y={node.y - ry + 56 + (H - 70) / 2}
+        textAnchor="middle" dominantBaseline="middle"
+        fontSize={node.isUser ? 10 : 9}
+        fontWeight="700"
         fontFamily="Space Grotesk, sans-serif"
-        fill={accentColor}
+        fill={accent}
       >
         {roleLabel(node.role, node.kwh)}
       </text>

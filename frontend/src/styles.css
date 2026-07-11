@@ -189,26 +189,54 @@
   100% { transform: translateY(0); opacity: 1; }
 }
 
-/* Energy map directional flow animations */
-/* Exporting: particles travel FROM house TOWARD grid (dashoffset decreases → forward motion) */
-@keyframes energy-flow-out {
-  from { stroke-dashoffset: 0; }
-  to   { stroke-dashoffset: -60; }
+/* ── Energy Map: directional flow animations (3 staggered layers each) ── */
+
+/* Layer 1 — main dashes, medium speed */
+@keyframes ef-out  { from { stroke-dashoffset:   0; } to { stroke-dashoffset: -80; } }
+@keyframes ef-in   { from { stroke-dashoffset:   0; } to { stroke-dashoffset:  80; } }
+
+/* Layer 2 — smaller dashes, faster speed, phase offset via animation-delay */
+@keyframes ef-out2 { from { stroke-dashoffset: -20; } to { stroke-dashoffset: -100; } }
+@keyframes ef-in2  { from { stroke-dashoffset:  20; } to { stroke-dashoffset:  100; } }
+
+/* Layer 3 — single bright dot, fast */
+@keyframes ef-out3 { from { stroke-dashoffset:   0; } to { stroke-dashoffset: -210; } }
+@keyframes ef-in3  { from { stroke-dashoffset:   0; } to { stroke-dashoffset:  210; } }
+
+/* Hub spinning outer ring */
+@keyframes hub-spin     { from { transform: rotate(0deg);    transform-origin: 550px 310px; }
+                          to   { transform: rotate(360deg);  transform-origin: 550px 310px; } }
+@keyframes hub-spin-rev { from { transform: rotate(0deg);    transform-origin: 550px 310px; }
+                          to   { transform: rotate(-360deg); transform-origin: 550px 310px; } }
+
+/* Hub pulse ring */
+@keyframes hub-pulse {
+  0%, 100% { opacity: 0.35; r: 80px; }
+  50%       { opacity: 0.08; r: 92px; }
 }
-/* Importing: particles travel FROM grid TOWARD house (dashoffset increases → reverse motion) */
-@keyframes energy-flow-in {
-  from { stroke-dashoffset: 0; }
-  to   { stroke-dashoffset: 60; }
-}
-/* Pulsing outer ring for user house when active */
-@keyframes energy-pulse-ring {
-  0%   { opacity: 0.5; r: 4px; }
-  50%  { opacity: 0.15; }
-  100% { opacity: 0.5; }
-}
+
+/* Active node outer glow halo */
+@keyframes node-pulse      { 0%, 100% { opacity: 0.55; } 50% { opacity: 0.12; } }
+@keyframes node-pulse-user { 0%, 100% { opacity: 0.80; } 50% { opacity: 0.20; } }
 
 .dash-flow        { animation: dash-flow 1.2s linear infinite; }
 .pulse-glow       { animation: pulse-glow 2.4s ease-in-out infinite; }
-.energy-flow-out  { animation: energy-flow-out 1.4s linear infinite; }
-.energy-flow-in   { animation: energy-flow-in 1.4s linear infinite; }
-.energy-pulse-ring { animation: energy-pulse-ring 2s ease-in-out infinite; }
+
+/* Export (green, toward grid) */
+.ef-out   { animation: ef-out  1.1s linear infinite; }
+.ef-out2  { animation: ef-out2 0.7s linear infinite; animation-delay: -0.3s; }
+.ef-out3  { animation: ef-out3 0.9s linear infinite; animation-delay: -0.55s; }
+
+/* Import (cyan, from grid) */
+.ef-in    { animation: ef-in   1.1s linear infinite; }
+.ef-in2   { animation: ef-in2  0.7s linear infinite; animation-delay: -0.3s; }
+.ef-in3   { animation: ef-in3  0.9s linear infinite; animation-delay: -0.55s; }
+
+/* Hub animations */
+.hub-spin     { animation: hub-spin     12s linear infinite; }
+.hub-spin-rev { animation: hub-spin-rev 18s linear infinite; }
+.hub-pulse    { animation: hub-pulse     3s ease-in-out infinite; }
+
+/* Node halos */
+.node-pulse      { animation: node-pulse      2.2s ease-in-out infinite; }
+.node-pulse-user { animation: node-pulse-user 1.8s ease-in-out infinite; }
