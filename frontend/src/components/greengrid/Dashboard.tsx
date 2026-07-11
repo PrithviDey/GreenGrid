@@ -464,8 +464,8 @@ function Navbar({
     <header className="sticky top-0 z-30 border-b border-white/5 backdrop-blur-xl bg-background/60">
       <div className="mx-auto flex max-w-[1500px] items-center justify-between px-5 py-3">
         <div className="flex items-center gap-2.5">
-          <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--gradient-neon)] shadow-[var(--shadow-neon)]">
-            <Leaf className="h-5 w-5 text-background" strokeWidth={2.5} />
+          <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 border border-white/10 overflow-hidden shadow-[0_0_10px_rgba(34,197,94,0.1)]">
+            <img src="/favicon.png" className="h-6 w-6 object-contain" alt="GreenGrid Logo" />
           </div>
           <div className="flex flex-col leading-none">
             <span className="font-[Space_Grotesk] text-lg font-bold tracking-tight">
@@ -528,9 +528,9 @@ function Navbar({
           ) : (
             <Button 
               onClick={onConnect}
-              className="bg-[var(--gradient-neon)] text-background font-semibold hover:opacity-90 shadow-[var(--shadow-neon)] px-4 py-2 rounded-xl text-xs flex items-center gap-2"
+              className="border border-[var(--neon-green)]/35 bg-[var(--neon-green)]/10 text-[var(--neon-green)] font-semibold hover:bg-[var(--neon-green)]/20 shadow-[0_0_15px_rgba(34,197,94,0.15)] px-4 py-2 rounded-xl text-xs flex items-center gap-2 transition duration-200"
             >
-              <Wallet className="h-4 w-4" />
+              <img src="/favicon.png" className="h-3.5 w-3.5 object-contain" alt="Logo" />
               Connect Wallet
             </Button>
           )}

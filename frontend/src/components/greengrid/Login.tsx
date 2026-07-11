@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Leaf, ShieldCheck, Lock, User, AlertCircle } from "lucide-react";
+import { Leaf, ShieldCheck, Lock, User, AlertCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 export function Login({ onLogin }: { onLogin: (username: string) => void }) {
@@ -43,8 +43,8 @@ export function Login({ onLogin }: { onLogin: (username: string) => void }) {
       <div className="w-full max-w-md space-y-6 relative z-10">
         {/* Brand Logo */}
         <div className="flex flex-col items-center text-center space-y-2">
-          <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--gradient-neon)] shadow-[var(--shadow-neon)] mb-2">
-            <Leaf className="h-8 w-8 text-background animate-pulse" strokeWidth={2} />
+          <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 border border-white/10 overflow-hidden mb-2 shadow-[0_0_20px_rgba(34,197,94,0.1)]">
+            <img src="/favicon.png" className="h-10 w-10 object-contain" alt="GreenGrid Logo" />
           </div>
           <h1 className="font-[Space_Grotesk] text-3xl font-bold tracking-tight text-foreground">
             Green<span className="text-glow-green">Grid</span>
@@ -95,9 +95,16 @@ export function Login({ onLogin }: { onLogin: (username: string) => void }) {
             <Button
               type="submit"
               disabled={loading}
-              className="w-full h-11 bg-[var(--gradient-neon)] text-background font-bold tracking-wide hover:opacity-90 shadow-[var(--shadow-neon)] rounded-xl mt-6 transition duration-200"
+              className="w-full h-11 border border-[var(--neon-green)]/35 bg-[var(--neon-green)]/10 text-[var(--neon-green)] font-bold tracking-wide hover:bg-[var(--neon-green)]/20 shadow-[0_0_15px_rgba(34,197,94,0.15)] rounded-xl mt-6 transition duration-200 flex items-center justify-center gap-2"
             >
-              {loading ? "Authenticating..." : "Sign In"}
+              {loading ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <>
+                  <img src="/favicon.png" className="h-4.5 w-4.5 object-contain" alt="Logo" />
+                  <span>Sign In</span>
+                </>
+              )}
             </Button>
           </form>
 
