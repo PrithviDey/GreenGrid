@@ -169,19 +169,24 @@ async function getGasOverrides(signer: ethers.Signer) {
       }
       return {
         maxFeePerGas: maxFee,
-        maxPriorityFeePerGas: maxPriority
+        maxPriorityFeePerGas: maxPriority,
+        gasLimit: 150000 // Explicitly set gasLimit to bypass pre-flight estimateGas check
       };
     } else {
       let gasPrice = feeData.gasPrice || minGasPrice;
       if (gasPrice < minGasPrice) {
         gasPrice = minGasPrice;
       }
-      return { gasPrice };
+      return { 
+        gasPrice,
+        gasLimit: 150000 // Explicitly set gasLimit to bypass pre-flight estimateGas check
+      };
     }
   } catch (e) {
     console.warn("Failed to fetch gas data, using 35 Gwei default override:", e);
     return {
-      gasPrice: ethers.parseUnits("35", "gwei")
+      gasPrice: ethers.parseUnits("35", "gwei"),
+      gasLimit: 150000 // Explicitly set gasLimit to bypass pre-flight estimateGas check
     };
   }
 }
