@@ -740,7 +740,7 @@ export function Dashboard({
                   genHistory={genHistory}
                   conHistory={conHistory}
                 />
-                <EnvCard account={account} onSuccess={() => refreshState()} />
+                <EnvCard account={account} onSuccess={() => refreshState()} listings={listings} />
               </aside>
 
               <section className="col-span-12 lg:col-span-5 space-y-5">
@@ -1575,8 +1575,24 @@ function FieldGroup({
   );
 }
 
-function EnvCard({ account, onSuccess }: { account: string | null; onSuccess: () => void }) {
+function EnvCard({ 
+  account, 
+  onSuccess,
+  listings
+}: { 
+  account: string | null; 
+  onSuccess: () => void;
+  listings: Listing[];
+}) {
   const [loading, setLoading] = useState(false);
+
+  // Compute actual energy received by this buyer account
+  const totalEnergyReceived = listings
+    .filter(l => l.isSettled && account && l.buyer.toLowerCase() === account.toLowerCase())
+    .reduce((acc, l) => acc + parseFloat(l.amount), 0);
+
+  // 0.42 kg of CO2 offset per kWh of solar energy
+  const co2Offset = totalEnergyReceived * 0.42;
 
   const handleMintTestCredits = async () => {
     if (!account) {
@@ -1615,19 +1631,29 @@ function EnvCard({ account, onSuccess }: { account: string | null; onSuccess: ()
         <span>Impact & Faucet</span>
         <Leaf className="h-3.5 w-3.5 text-[var(--neon-green)]" />
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-3 items-center">
+      <div className="mt-4 grid grid-cols-3 gap-3 items-center">
         <div>
-          <div className="font-[Space_Grotesk] text-2xl font-bold">4.2<span className="text-sm text-muted-foreground ml-1">kg</span></div>
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">CO₂ offset</div>
+          <div className="font-[Space_Grotesk] text-xl sm:text-2xl font-bold text-glow-cyan">
+            {totalEnergyReceived.toFixed(1)}
+            <span className="text-xs text-muted-foreground font-normal ml-0.5">kWh</span>
+          </div>
+          <div className="text-[9px] uppercase tracking-wider text-muted-foreground mt-0.5">Solar Imported</div>
+        </div>
+        <div>
+          <div className="font-[Space_Grotesk] text-xl sm:text-2xl font-bold text-glow-green">
+            {co2Offset.toFixed(2)}
+            <span className="text-xs text-muted-foreground font-normal ml-0.5">kg</span>
+          </div>
+          <div className="text-[9px] uppercase tracking-wider text-muted-foreground mt-0.5">CO₂ offset</div>
         </div>
         <div>
           <Button
             size="sm"
             disabled={loading || !account}
             onClick={handleMintTestCredits}
-            className="w-full bg-[var(--neon-green)]/10 border border-[var(--neon-green)]/20 hover:bg-[var(--neon-green)]/20 text-glow-green text-[10px] py-4 uppercase font-semibold"
+            className="w-full bg-[var(--neon-green)]/10 border border-[var(--neon-green)]/20 hover:bg-[var(--neon-green)]/20 text-glow-green text-[9px] py-4 uppercase font-semibold text-center leading-tight"
           >
-            {loading ? "Minting..." : "Simulate Solar (Mint 50 GRN)"}
+            {loading ? "..." : "Mint 50 GRN"}
           </Button>
         </div>
       </div>
