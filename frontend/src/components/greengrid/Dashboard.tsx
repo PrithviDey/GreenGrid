@@ -95,6 +95,12 @@ export function Dashboard() {
   const [autoTrade, setAutoTrade] = useState(true);
   const [feed, setFeed] = useState<Tx[]>([]);
   const [activeTab, setActiveTab] = useState<string>("grid");
+  const [successDetails, setSuccessDetails] = useState<{
+    amount: string;
+    price: string;
+    seller: string;
+    total: string;
+  } | null>(null);
   
   // User Authentication state
   const [currentUser, setCurrentUser] = useState<string | null>(() => {
@@ -645,7 +651,10 @@ export function Dashboard() {
                   signer={signer} 
                   account={account} 
                   suggestedPrice={minPrice[0]} 
-                  onSuccess={() => refreshState()} 
+                  onSuccess={(details) => {
+                    refreshState();
+                    if (details) setSuccessDetails(details);
+                  }} 
                   onConnect={handleConnect}
                   walletMismatch={walletMismatch}
                   listings={listings}
@@ -669,7 +678,10 @@ export function Dashboard() {
               loading={loadingListings} 
               signer={signer} 
               account={account} 
-              onSuccess={() => refreshState()}
+              onSuccess={(details) => {
+                refreshState();
+                if (details) setSuccessDetails(details);
+              }}
               walletMismatch={walletMismatch}
             />
           </>
@@ -681,7 +693,10 @@ export function Dashboard() {
             loading={loadingListings}
             signer={signer}
             account={account}
-            onSuccess={() => refreshState()}
+            onSuccess={(details) => {
+              refreshState();
+              if (details) setSuccessDetails(details);
+            }}
             walletMismatch={walletMismatch}
           />
         )}
@@ -692,6 +707,60 @@ export function Dashboard() {
 
         {activeTab === "analytics" && (
           <AnalyticsView />
+        )}
+
+        {successDetails && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in zoom-in duration-200">
+            <div className="glass-panel max-w-sm w-full p-6 text-center border-t-2 border-t-[var(--neon-cyan)] shadow-[0_0_50px_rgba(34,211,238,0.15)] relative overflow-hidden">
+              <div className="absolute -top-10 -left-10 w-24 h-24 rounded-full bg-[var(--neon-cyan)]/10 blur-2xl pointer-events-none"></div>
+              <div className="absolute -bottom-10 -right-10 w-24 h-24 rounded-full bg-[var(--neon-green)]/10 blur-2xl pointer-events-none"></div>
+
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--neon-cyan)]/10 border border-[var(--neon-cyan)]/30 text-[var(--neon-cyan)] shadow-[0_0_15px_rgba(34,211,238,0.2)] mb-4">
+                <Zap className="h-5 w-5 animate-pulse" />
+              </div>
+
+              <h3 className="font-[Space_Grotesk] text-lg font-bold text-foreground">
+                🎉 Purchase Escrowed!
+              </h3>
+              <p className="text-xs text-muted-foreground mt-1.5 max-w-[280px] mx-auto">
+                Payment successfully locked in the on-chain escrow contract. Awaiting physical electricity flow.
+              </p>
+
+              <div className="mt-5 rounded-xl border border-white/5 bg-white/[0.02] p-3 text-left font-[JetBrains_Mono] text-[11px] space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Volume:</span>
+                  <span className="font-bold text-foreground">{successDetails.amount} kWh (GRN)</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Price per kWh:</span>
+                  <span className="text-foreground">{successDetails.price} POL</span>
+                </div>
+                <div className="flex justify-between items-center border-t border-white/5 pt-1.5 mt-1">
+                  <span className="text-muted-foreground">Total Escrowed:</span>
+                  <span className="font-bold text-glow-cyan text-xs">{successDetails.total} POL</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Seller:</span>
+                  <span className="text-foreground truncate max-w-[150px]">{SELLER_PROFILES[successDetails.seller.toLowerCase()]?.alias || truncateAddress(successDetails.seller)}</span>
+                </div>
+              </div>
+
+              <div className="mt-4 flex gap-2.5 items-start p-3 bg-[var(--neon-green)]/5 border border-[var(--neon-green)]/20 rounded-xl text-left">
+                <Leaf className="h-4 w-4 text-[var(--neon-green)] shrink-0 mt-0.5" />
+                <div className="text-[10px] text-[var(--neon-green)] leading-normal">
+                  <span className="font-bold block">Carbon Impact:</span>
+                  This purchase prevents approx. <strong className="text-foreground">{(parseFloat(successDetails.amount) * 0.38).toFixed(2)} kg of CO₂</strong> emissions.
+                </div>
+              </div>
+
+              <Button
+                onClick={() => setSuccessDetails(null)}
+                className="mt-5 w-full h-10 text-xs font-semibold bg-[var(--neon-cyan)]/15 border border-[var(--neon-cyan)]/30 hover:bg-[var(--neon-cyan)]/25 text-glow-cyan shadow-[0_0_10px_rgba(34,211,238,0.1)] transition duration-200"
+              >
+                Awesome!
+              </Button>
+            </div>
+          </div>
         )}
 
       </main>
@@ -967,7 +1036,7 @@ function QuickTrade({
   signer: ethers.Signer | null; 
   account: string | null;
   suggestedPrice: number; 
-  onSuccess: () => void;
+  onSuccess: (details?: { amount: string; price: string; seller: string; total: string }) => void;
   onConnect: () => void;
   walletMismatch?: boolean;
   listings: Listing[];
@@ -1063,6 +1132,11 @@ function QuickTrade({
       }
       setLoading(true);
       try {
+        const amt = selectedListing.amount;
+        const prc = parseFloat(selectedListing.pricePerToken).toString();
+        const sel = selectedListing.seller;
+        const tot = (parseFloat(amt) * parseFloat(prc)).toFixed(4);
+
         if (selectedListing.id >= 101) {
           toast.info("Sending payment deposit to escrow contract (Simulated)...");
           await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -1070,12 +1144,22 @@ function QuickTrade({
           purchasedMocks.push(selectedListing.id);
           localStorage.setItem("greengrid_purchased_mocks", JSON.stringify(purchasedMocks));
           toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
-          onSuccess();
+          onSuccess({
+            amount: amt,
+            price: prc,
+            seller: sel,
+            total: tot
+          });
         } else {
           toast.info("Sending payment deposit to escrow contract via MetaMask...");
           await buyEnergyListing(signer, selectedListing.id, total);
           toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
-          onSuccess();
+          onSuccess({
+            amount: amt,
+            price: prc,
+            seller: sel,
+            total: tot
+          });
         }
       } catch (err: any) {
         console.error(err);
@@ -1515,7 +1599,7 @@ function ActiveListings({
   loading: boolean;
   signer: ethers.Signer | null;
   account: string | null;
-  onSuccess: () => void;
+  onSuccess: (details?: { amount: string; price: string; seller: string; total: string }) => void;
   walletMismatch?: boolean;
 }) {
   const [processingId, setProcessingId] = useState<number | null>(null);
@@ -1530,6 +1614,11 @@ function ActiveListings({
     
     setProcessingId(listingId);
     try {
+      const listing = listings.find(l => l.id === listingId);
+      const amountStr = listing ? listing.amount : "0";
+      const priceStr = listing ? listing.pricePerToken : "0";
+      const sellerStr = listing ? listing.seller : "";
+
       if (listingId >= 101) {
         toast.info("Sending payment deposit to escrow contract (Simulated)...");
         await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -1537,14 +1626,24 @@ function ActiveListings({
         purchasedMocks.push(listingId);
         localStorage.setItem("greengrid_purchased_mocks", JSON.stringify(purchasedMocks));
         toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
-        onSuccess();
+        onSuccess({
+          amount: amountStr,
+          price: priceStr,
+          seller: sellerStr,
+          total: totalCostMatic
+        });
         return;
       }
 
       toast.info("Sending payment deposit to escrow contract via MetaMask...");
       const receipt = await buyEnergyListing(signer, listingId, totalCostMatic);
       toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
-      onSuccess();
+      onSuccess({
+        amount: amountStr,
+        price: priceStr,
+        seller: sellerStr,
+        total: totalCostMatic
+      });
     } catch (err: any) {
       toast.error(err.reason || err.message || "Failed to purchase energy");
     } finally {

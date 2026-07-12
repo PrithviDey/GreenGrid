@@ -34,7 +34,7 @@ interface MarketplaceViewProps {
   loading: boolean;
   signer: ethers.Signer | null;
   account: string | null;
-  onSuccess: () => void;
+  onSuccess: (details?: { amount: string; price: string; seller: string; total: string }) => void;
   walletMismatch?: boolean;
 }
 
@@ -236,6 +236,11 @@ export function MarketplaceView({
     }
     setProcessingId(listingId);
     try {
+      const listing = listings.find(l => l.id === listingId);
+      const amountStr = listing ? listing.amount : "0";
+      const priceStr = listing ? listing.pricePerToken : "0";
+      const sellerStr = listing ? listing.seller : "";
+
       if (listingId >= 101) {
         toast.info("Sending payment deposit to escrow contract (Simulated)...");
         await new Promise(resolve => setTimeout(resolve, 1500));
@@ -243,13 +248,23 @@ export function MarketplaceView({
         purchasedMocks.push(listingId);
         localStorage.setItem("greengrid_purchased_mocks", JSON.stringify(purchasedMocks));
         toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
-        onSuccess();
+        onSuccess({
+          amount: amountStr,
+          price: priceStr,
+          seller: sellerStr,
+          total: totalCostMatic
+        });
         return;
       }
       toast.info("Sending payment deposit to escrow contract via MetaMask...");
       await buyEnergyListing(signer, listingId, totalCostMatic);
       toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
-      onSuccess();
+      onSuccess({
+        amount: amountStr,
+        price: priceStr,
+        seller: sellerStr,
+        total: totalCostMatic
+      });
     } catch (err: any) {
       toast.error(err.reason || err.message || "Failed to purchase energy");
     } finally {
