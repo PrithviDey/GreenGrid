@@ -177,7 +177,7 @@ export function LandingPage({
     {
       title: "3. Smart Matchmaking",
       desc: "Consumers browse the live marketplace, select a nearby seller, and deposit MATIC/POL payment into the escrow. The trade is matched instantly and logged in the public ledger.",
-      icon: <User className="h-6 w-6 text-[var(--neon-cyan)]" />,
+      icon: <Wallet className="h-6 w-6 text-[var(--neon-cyan)]" />,
       color: "from-[var(--neon-cyan)]/20 to-[var(--neon-cyan)]/5",
       border: "border-[var(--neon-cyan)]/30",
       accent: "text-[var(--neon-cyan)]"
