@@ -152,9 +152,13 @@ async function getGasOverrides(signer: ethers.Signer) {
     const provider = signer.provider;
     if (!provider) throw new Error("No provider found on signer");
     const feeData = await provider.getFeeData();
+    const network = await provider.getNetwork();
     const minGasPrice = ethers.parseUnits("30", "gwei");
     
-    if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+    // Check if on a local test network (Hardhat/Localhost) to skip EIP-1559 and avoid MetaMask fee inconsistencies
+    const isLocal = network.chainId === 31337n || network.chainId === 1337n;
+    
+    if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas && !isLocal) {
       let maxFee = feeData.maxFeePerGas;
       let maxPriority = feeData.maxPriorityFeePerGas;
       if (maxFee < minGasPrice) {
