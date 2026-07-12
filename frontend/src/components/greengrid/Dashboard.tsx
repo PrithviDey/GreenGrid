@@ -75,14 +75,17 @@ type Tx = {
   gc: number;
   addr: string;
   ago: string;
+  statusText?: string;
 };
 
 const seedTx: Tx[] = [
-  { id: "0xa1", kind: "sell", kwh: 2.5, gc: 5, addr: "0x89F...7C2", ago: "just now" },
-  { id: "0xa2", kind: "sell", kwh: 1.2, gc: 2.4, addr: "0x41A...9E8", ago: "12s" },
-  { id: "0xa3", kind: "buy", kwh: 0.8, gc: 1.6, addr: "Utility Grid", ago: "38s" },
-  { id: "0xa4", kind: "sell", kwh: 3.1, gc: 6.2, addr: "0xB0D...1F4", ago: "1m" },
-  { id: "0xa5", kind: "sell", kwh: 0.6, gc: 1.2, addr: "0x77E...C10", ago: "2m" },
+  { id: "fake-1", kind: "sell", kwh: 4.5, gc: 0.0054, addr: "SolarMax Alpha", ago: "2m ago", statusText: "Sold" },
+  { id: "fake-2", kind: "buy", kwh: 2.8, gc: 0.0078, addr: "Utility Hub", ago: "9m ago", statusText: "Bought" },
+  { id: "fake-3", kind: "sell", kwh: 6.0, gc: 0.0048, addr: "EcoWatt Pro", ago: "18m ago", statusText: "Sold" },
+  { id: "fake-4", kind: "buy", kwh: 1.5, gc: 0.0067, addr: "CleanGrid Beta", ago: "40m ago", statusText: "Bought" },
+  { id: "fake-5", kind: "sell", kwh: 8.2, gc: 0.0123, addr: "VoltShare Inc", ago: "2h ago", statusText: "Sold" },
+  { id: "fake-6", kind: "buy", kwh: 3.0, gc: 0.0036, addr: "SunStream House", ago: "5h ago", statusText: "Bought" },
+  { id: "fake-7", kind: "sell", kwh: 1.2, gc: 0.0024, addr: "GreenHouse Delta", ago: "9h ago", statusText: "Sold" }
 ];
 
 function truncateAddress(address: string) {
@@ -421,54 +424,81 @@ export function Dashboard() {
     const activeOrMatchedMocks = processedMocks.filter(m => !m.isSettled);
     setListings([...activeOrMatchedMocks, ...chainListings]);
     
-    // Map actual settled listings and settled mock listings to feed
-    const settledChainListings = chainListings.filter(l => l.isSettled);
-    const settledMocks = processedMocks.filter(m => m.isSettled);
-
-    const mappedChainFeed: Tx[] = settledChainListings.map(l => {
+    // Map all listings (active, matched, settled) to the activity feed
+    const mapListingToFeed = (l: Listing, isMock: boolean): Tx => {
       const isSeller = activeAddr && l.seller.toLowerCase() === activeAddr.toLowerCase();
       const isBuyer = activeAddr && l.buyer.toLowerCase() === activeAddr.toLowerCase();
       
-      let agoStr = "completed";
-      if (l.matchedAt > 0) {
-        const diffSeconds = Math.floor(Date.now() / 1000) - l.matchedAt;
-        if (diffSeconds < 60) agoStr = "just now";
-        else if (diffSeconds < 3600) agoStr = `${Math.floor(diffSeconds / 60)}m ago`;
-        else if (diffSeconds < 86400) agoStr = `${Math.floor(diffSeconds / 3600)}h ago`;
-        else agoStr = `${Math.floor(diffSeconds / 86400)}d ago`;
-      }
+      let kind: "sell" | "buy" = "sell";
+      let statusText = "Listed";
+      let displayAddr = SELLER_PROFILES[l.seller.toLowerCase()]?.alias || truncateAddress(l.seller);
       
+      if (l.isSettled) {
+        kind = isBuyer ? "buy" : "sell";
+        statusText = isBuyer ? "Bought" : isSeller ? "Sold" : "Settled";
+        displayAddr = isSeller 
+          ? (l.buyer && l.buyer !== "0x0000000000000000000000000000000000000000" ? truncateAddress(l.buyer) : "Consumer")
+          : displayAddr;
+      } else if (l.isMatched) {
+        kind = "buy";
+        statusText = isBuyer ? "Escrowed" : isSeller ? "Matched" : "Matched";
+        displayAddr = isSeller 
+          ? (l.buyer && l.buyer !== "0x0000000000000000000000000000000000000000" ? truncateAddress(l.buyer) : "Consumer")
+          : displayAddr;
+      } else {
+        kind = "sell";
+        statusText = isSeller ? "Listed" : "Listing";
+      }
+
+      let agoStr = "active";
+      if (l.isSettled || l.isMatched) {
+        agoStr = isMock ? "just now" : "completed";
+        if (!isMock && l.matchedAt > 0) {
+          const diffSeconds = Math.floor(Date.now() / 1000) - l.matchedAt;
+          if (diffSeconds < 60) agoStr = "just now";
+          else if (diffSeconds < 3600) agoStr = `${Math.floor(diffSeconds / 60)}m ago`;
+          else if (diffSeconds < 86400) agoStr = `${Math.floor(diffSeconds / 3600)}h ago`;
+          else agoStr = `${Math.floor(diffSeconds / 86400)}d ago`;
+        }
+      }
+
       return {
-        id: `chain-${l.id}`,
-        kind: isBuyer ? "buy" : "sell",
+        id: `${isMock ? "mock" : "chain"}-${l.id}-${l.isSettled ? "settled" : l.isMatched ? "matched" : "active"}`,
+        kind,
         kwh: parseFloat(l.amount),
         gc: parseFloat((parseFloat(l.amount) * parseFloat(l.pricePerToken)).toFixed(6)),
-        addr: isSeller ? truncateAddress(l.buyer) : truncateAddress(l.seller),
-        ago: agoStr
+        addr: displayAddr,
+        ago: agoStr,
+        statusText
       };
-    });
+    };
 
-    const mappedMockFeed: Tx[] = settledMocks.map(m => {
-      const isSeller = activeAddr && m.seller.toLowerCase() === activeAddr.toLowerCase();
-      const isBuyer = activeAddr && m.buyer.toLowerCase() === activeAddr.toLowerCase();
-      return {
-        id: `mock-${m.id}`,
-        kind: isBuyer ? "buy" : "sell",
-        kwh: parseFloat(m.amount),
-        gc: parseFloat((parseFloat(m.amount) * parseFloat(m.pricePerToken)).toFixed(6)),
-        addr: isSeller ? truncateAddress(m.buyer) : truncateAddress(m.seller),
-        ago: "just now"
-      };
-    });
+    const mappedChainFeed = chainListings.map(l => mapListingToFeed(l, false));
+    const mappedMockFeed = processedMocks.map(m => mapListingToFeed(m, true));
 
-    const combinedFeed = [...mappedMockFeed, ...mappedChainFeed];
-    
-    // Sort combined feed by listing ID descending
+    // Combine all sources including fake seed data
+    const combinedFeed = [...mappedMockFeed, ...mappedChainFeed, ...seedTx];
+
+    // Sort feed: active real trades at the top, followed by settled real trades, and fake records at the bottom
     combinedFeed.sort((a, b) => {
-      const getNum = (idStr: string) => parseInt(idStr.replace("chain-", "").replace("mock-", ""));
+      const isFakeA = a.id.startsWith("fake-");
+      const isFakeB = b.id.startsWith("fake-");
+      
+      if (isFakeA && !isFakeB) return 1;
+      if (!isFakeA && isFakeB) return -1;
+      if (isFakeA && isFakeB) {
+        // Keep order of fake records
+        return seedTx.findIndex(x => x.id === a.id) - seedTx.findIndex(x => x.id === b.id);
+      }
+      
+      // Sort real trades by listing ID (highest first)
+      const getNum = (idStr: string) => {
+        const match = idStr.match(/(?:chain|mock)-(\d+)/);
+        return match ? parseInt(match[1]) : 0;
+      };
       return getNum(b.id) - getNum(a.id);
     });
-    
+
     setFeed(combinedFeed);
     setLoadingListings(false);
   };
@@ -1537,7 +1567,7 @@ function Ledger({ feed }: { feed: Tx[] }) {
         </div>
       </div>
 
-      <div className="mt-4 flex-1 space-y-2 overflow-hidden flex flex-col justify-center">
+      <div className="mt-4 flex-1 space-y-2 overflow-y-auto max-h-[420px] pr-1 scroll-smooth">
         {feed.length === 0 ? (
           <div className="flex flex-col items-center justify-center text-center p-5 text-muted-foreground text-sm my-auto">
             <Zap className="h-8 w-8 text-muted-foreground/20 mb-2 animate-pulse" />
@@ -1548,29 +1578,29 @@ function Ledger({ feed }: { feed: Tx[] }) {
           feed.map((tx) => (
             <div
               key={tx.id}
-              className="group flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-3 transition"
+              className="group flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-2.5 transition hover:bg-white/[0.04]"
             >
               <div
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
                   tx.kind === "sell"
-                    ? "bg-[var(--neon-green)]/12 text-[var(--neon-green)]"
-                    : "bg-[var(--neon-cyan)]/12 text-[var(--neon-cyan)]"
+                    ? "bg-[var(--neon-green)]/12 text-[var(--neon-green)] border border-[var(--neon-green)]/20"
+                    : "bg-[var(--neon-cyan)]/12 text-[var(--neon-cyan)] border border-[var(--neon-cyan)]/20"
                 }`}
               >
-                <Zap className="h-4 w-4" />
+                <Zap className="h-3.5 w-3.5" />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-1.5 text-sm">
+                <div className="flex items-baseline gap-1.5 text-xs">
                   <span className={tx.kind === "sell" ? "text-glow-green font-semibold" : "text-glow-cyan font-semibold"}>
-                    {tx.kind === "sell" ? "Sold" : "Bought"}
+                    {tx.statusText || (tx.kind === "sell" ? "Sold" : "Bought")}
                   </span>
-                  <span className="font-[JetBrains_Mono]">{tx.kwh} kWh</span>
-                  <span className="text-muted-foreground">·</span>
-                  <span className="font-[JetBrains_Mono] text-xs text-muted-foreground truncate">
+                  <span className="font-[JetBrains_Mono] text-foreground font-medium">{tx.kwh} kWh</span>
+                  <span className="text-white/10">·</span>
+                  <span className="font-[JetBrains_Mono] text-[10px] text-muted-foreground truncate max-w-[90px]">
                     {tx.addr}
                   </span>
                 </div>
-                <div className="mt-0.5 flex items-center justify-between text-[11px] text-muted-foreground">
+                <div className="mt-0.5 flex items-center justify-between text-[10px] text-muted-foreground">
                   <span>{tx.ago}</span>
                   <span className="font-[JetBrains_Mono] text-foreground/80">
                     {tx.kind === "sell" ? "+" : "−"}
