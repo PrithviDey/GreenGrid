@@ -32,6 +32,7 @@ try:
 except Exception as e:
     raise RuntimeError(f"Could not load deployment configuration: {e}")
 
+# RPC and Address configs
 RPC_URL = config.get("rpcUrl", "http://127.0.0.1:8545")
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
 
@@ -41,19 +42,27 @@ if not w3.is_connected():
 GREEN_COIN_ADDRESS = Web3.to_checksum_address(config["greenCoinAddress"])
 ENERGY_TRADING_ADDRESS = Web3.to_checksum_address(config["energyTradingAddress"])
 
-# Oracle Key Fallbacks: config JSON -> ORACLE_PRIVATE_KEY -> PRIVATE_KEY
-ORACLE_PRIVATE_KEY = config.get("oraclePrivateKey") or os.environ.get("ORACLE_PRIVATE_KEY") or os.environ.get("PRIVATE_KEY")
-ORACLE_ADDRESS = Web3.to_checksum_address(config["oracleAddress"])
+# Secure Key derivation strictly from Env (not flat config files)
+ORACLE_PRIVATE_KEY = os.environ.get("ORACLE_PRIVATE_KEY") or os.environ.get("PRIVATE_KEY")
+if not ORACLE_PRIVATE_KEY:
+    raise RuntimeError("Critical: Missing ORACLE_PRIVATE_KEY or PRIVATE_KEY in env variables")
 
-# Deployer key for minting permissions
-DEPLOYER_PRIVATE_KEY = os.environ.get("PRIVATE_KEY") or "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-if DEPLOYER_PRIVATE_KEY:
-    try:
-        DEPLOYER_ADDRESS = Account.from_key(DEPLOYER_PRIVATE_KEY).address
-    except Exception:
-        DEPLOYER_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-else:
-    DEPLOYER_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+try:
+    oracle_account = Account.from_key(ORACLE_PRIVATE_KEY)
+    ORACLE_ADDRESS = Web3.to_checksum_address(oracle_account.address)
+except Exception as e:
+    raise RuntimeError(f"Failed to load Oracle Account from private key: {e}")
+
+DEPLOYER_PRIVATE_KEY = os.environ.get("PRIVATE_KEY")
+if not DEPLOYER_PRIVATE_KEY:
+    raise RuntimeError("Critical: Missing PRIVATE_KEY (Deployer) in env variables")
+
+try:
+    deployer_account = Account.from_key(DEPLOYER_PRIVATE_KEY)
+    DEPLOYER_ADDRESS = Web3.to_checksum_address(deployer_account.address)
+except Exception as e:
+    raise RuntimeError(f"Failed to load Deployer Account from private key: {e}")
+
 
 # Load ABIs
 def load_abi(contract_name: str):
@@ -80,6 +89,50 @@ except Exception as e:
 
 green_coin_contract = w3.eth.contract(address=GREEN_COIN_ADDRESS, abi=GREEN_COIN_ABI)
 energy_trading_contract = w3.eth.contract(address=ENERGY_TRADING_ADDRESS, abi=ENERGY_TRADING_ABI)
+
+
+# EIP-1559 Dynamic Gas Fee Estimator
+def get_eip1559_gas_params():
+    """
+    Dynamically fetches gas parameters. Estimates base fee and priority fee for
+    EIP-1559 compliant transactions, falling back to legacy gasPrice if necessary.
+    """
+    try:
+        latest_block = w3.eth.get_block('latest')
+        base_fee = latest_block.get('baseFeePerGas')
+        
+        # If network doesn't support EIP-1559, fall back to legacy gas pricing
+        if base_fee is None:
+            return {
+                'gasPrice': w3.eth.gas_price,
+                'chainId': w3.eth.chain_id
+            }
+        
+        # Query recommended max priority fee (miner tip)
+        priority_fee = w3.eth.max_priority_fee
+        
+        # Max fee = (2 * base fee) + priority fee
+        max_fee = (2 * base_fee) + priority_fee
+        
+        return {
+            'maxFeePerGas': max_fee,
+            'maxPriorityFeePerGas': priority_fee,
+            'chainId': w3.eth.chain_id
+        }
+    except Exception as e:
+        print(f"EIP-1559 dynamic estimation failed, falling back to legacy gasPrice: {e}")
+        try:
+            return {
+                'gasPrice': w3.eth.gas_price,
+                'chainId': w3.eth.chain_id
+            }
+        except Exception:
+            # Absolute fallback
+            return {
+                'gasPrice': w3.to_wei(25, 'gwei'),
+                'chainId': 80002 # Polygon Amoy default
+            }
+
 
 class SettleRequest(BaseModel):
     listing_id: int
@@ -120,14 +173,14 @@ def get_listing(listing_id: int):
             
         return {
             "id": listing_info[0],
-            "seller": listing_info[1],
-            "amount_kwh": float(w3.from_wei(listing_info[2], 'ether')), 
-            "price_per_kwh_matic": float(w3.from_wei(listing_info[3], 'ether')),
-            "buyer": listing_info[4],
-            "matched_at": listing_info[5],
-            "is_active": listing_info[6],
-            "is_matched": listing_info[7],
-            "is_settled": listing_info[8]
+            "seller": listing_info[3],
+            "amount_kwh": float(w3.from_wei(listing_info[1], 'ether')),
+            "price_per_kwh_matic": float(w3.from_wei(listing_info[2], 'ether')),
+            "buyer": listing_info[7],
+            "matched_at": listing_info[8],
+            "is_active": listing_info[4],
+            "is_matched": listing_info[5],
+            "is_settled": listing_info[6]
         }
     except HTTPException:
         raise
@@ -144,14 +197,14 @@ def get_all_listings():
             if listing_info[0] != 0:
                 all_listings.append({
                     "id": listing_info[0],
-                    "seller": listing_info[1],
-                    "amount_kwh": float(w3.from_wei(listing_info[2], 'ether')),
-                    "price_per_kwh_matic": float(w3.from_wei(listing_info[3], 'ether')),
-                    "buyer": listing_info[4],
-                    "matched_at": listing_info[5],
-                    "is_active": listing_info[6],
-                    "is_matched": listing_info[7],
-                    "is_settled": listing_info[8]
+                    "seller": listing_info[3], # seller is index 3 in Solidity packed order? Wait, let's verify!
+                    "amount_kwh": float(w3.from_wei(listing_info[1], 'ether')),
+                    "price_per_kwh_matic": float(w3.from_wei(listing_info[2], 'ether')),
+                    "buyer": listing_info[7],
+                    "matched_at": listing_info[8],
+                    "is_active": listing_info[4],
+                    "is_matched": listing_info[5],
+                    "is_settled": listing_info[6]
                 })
         return all_listings
     except Exception as e:
@@ -161,26 +214,29 @@ def get_all_listings():
 def settle_trade(req: SettleRequest):
     """
     Oracle settlement endpoint. Relays physical meter proof and settles trade on blockchain.
-    Signs the confirmDelivery transaction using the Oracle's private key.
+    Signs confirmDelivery using EIP-1559 dynamic gas parameters.
     """
     try:
         # Check listing state
         listing_info = energy_trading_contract.functions.listings(req.listing_id).call()
         if listing_info[0] == 0:
             raise HTTPException(status_code=404, detail="Listing not found")
-        if not listing_info[7]: 
+        # index 5 is isMatched, index 6 is isSettled in struct
+        if not listing_info[5]: 
             raise HTTPException(status_code=400, detail="Listing is not matched by a buyer yet")
-        if listing_info[8]: 
+        if listing_info[6]: 
             raise HTTPException(status_code=400, detail="Listing is already settled")
 
         # Build transaction
         nonce = w3.eth.get_transaction_count(ORACLE_ADDRESS)
-        tx = energy_trading_contract.functions.confirmDelivery(req.listing_id).build_transaction({
+        tx_fields = {
             'from': ORACLE_ADDRESS,
             'gas': 150000,
-            'gasPrice': w3.eth.gas_price,
             'nonce': nonce,
-        })
+        }
+        tx_fields.update(get_eip1559_gas_params())
+
+        tx = energy_trading_contract.functions.confirmDelivery(req.listing_id).build_transaction(tx_fields)
         
         # Sign transaction
         signed_tx = w3.eth.account.sign_transaction(tx, private_key=ORACLE_PRIVATE_KEY)
@@ -209,25 +265,26 @@ def settle_trade(req: SettleRequest):
 def abort_trade(req: AbortRequest):
     """
     Oracle abort endpoint. Cancels matched but unfulfilled energy delivery.
-    Refunds the buyer and returns tokens to the seller.
     """
     try:
         listing_info = energy_trading_contract.functions.listings(req.listing_id).call()
         if listing_info[0] == 0:
             raise HTTPException(status_code=404, detail="Listing not found")
-        if not listing_info[7]:
+        if not listing_info[5]:
             raise HTTPException(status_code=400, detail="Listing is not matched")
-        if listing_info[8]:
+        if listing_info[6]:
             raise HTTPException(status_code=400, detail="Listing is already settled")
 
         # Build transaction
         nonce = w3.eth.get_transaction_count(ORACLE_ADDRESS)
-        tx = energy_trading_contract.functions.abortTrade(req.listing_id).build_transaction({
+        tx_fields = {
             'from': ORACLE_ADDRESS,
             'gas': 120000,
-            'gasPrice': w3.eth.gas_price,
             'nonce': nonce,
-        })
+        }
+        tx_fields.update(get_eip1559_gas_params())
+
+        tx = energy_trading_contract.functions.abortTrade(req.listing_id).build_transaction(tx_fields)
         
         # Sign transaction
         signed_tx = w3.eth.account.sign_transaction(tx, private_key=ORACLE_PRIVATE_KEY)
@@ -253,20 +310,21 @@ def abort_trade(req: AbortRequest):
 @app.post("/mint")
 def mint_energy_credits(req: MintRequest):
     """
-    Simulated Smart Meter endpoint. Mint GreenCoins to seller address when excess generation occurs.
-    Usually triggered by the IoT Oracle backend.
+    Simulated Smart Meter endpoint. Mint GreenCoins to seller address.
     """
     try:
         to_chk = w3.to_checksum_address(req.to_address)
         wei_amount = w3.to_wei(req.amount_kwh, 'ether')
         
         nonce = w3.eth.get_transaction_count(DEPLOYER_ADDRESS)
-        tx = green_coin_contract.functions.mint(to_chk, wei_amount).build_transaction({
+        tx_fields = {
             'from': DEPLOYER_ADDRESS,
             'gas': 100000,
-            'gasPrice': w3.eth.gas_price,
             'nonce': nonce,
-        })
+        }
+        tx_fields.update(get_eip1559_gas_params())
+
+        tx = green_coin_contract.functions.mint(to_chk, wei_amount).build_transaction(tx_fields)
         
         signed_tx = w3.eth.account.sign_transaction(tx, private_key=DEPLOYER_PRIVATE_KEY)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)

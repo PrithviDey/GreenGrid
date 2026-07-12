@@ -41,7 +41,8 @@ import {
   mintCreditsViaOracle,
   Listing,
   GREEN_COIN_ADDRESS,
-  ENERGY_TRADING_ADDRESS
+  ENERGY_TRADING_ADDRESS,
+  switchChainToPolygonAmoy
 } from "../../lib/web3";
 
 const generationCurve = [
@@ -120,6 +121,7 @@ export function Dashboard() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [loadingListings, setLoadingListings] = useState<boolean>(false);
   const [oracleStatus, setOracleStatus] = useState<boolean>(false);
+  const [chainId, setChainId] = useState<string | null>(null);
 
   // Calculate wallet mismatch relative to logged in user's locked address
   const walletMismatch = useMemo(() => {
@@ -174,11 +176,63 @@ export function Dashboard() {
     return () => clearInterval(timer);
   }, []);
 
+  // Listen for MetaMask account and chain changes in real-time
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.ethereum) {
+      const handleAccounts = async (accounts: string[]) => {
+        if (accounts.length > 0) {
+          try {
+            const wallet = await connectWallet();
+            syncUserWithWallet(wallet.address, wallet.signer);
+          } catch (e) {
+            console.error("MetaMask accountsChanged handler failed:", e);
+          }
+        } else {
+          setAccount(null);
+          setSigner(null);
+        }
+      };
+
+      const handleChain = (chainIdHex: string) => {
+        const idDec = parseInt(chainIdHex, 16).toString();
+        setChainId(idDec);
+        refreshState();
+      };
+
+      // Read initial chainId
+      window.ethereum.request({ method: "eth_chainId" })
+        .then((hexId: any) => {
+          if (hexId) {
+            setChainId(parseInt(hexId, 16).toString());
+          }
+        })
+        .catch(console.error);
+
+      window.ethereum.on("accountsChanged", handleAccounts);
+      window.ethereum.on("chainChanged", handleChain);
+
+      return () => {
+        window.ethereum.removeListener("accountsChanged", handleAccounts);
+        window.ethereum.removeListener("chainChanged", handleChain);
+      };
+    }
+  }, []);
+
   const netFlow = simGen - simCon;
 
   // Helper to synchronize connected wallet with user profiles
-  const syncUserWithWallet = (walletAddress: string, signerInstance: ethers.Signer) => {
+  const syncUserWithWallet = async (walletAddress: string, signerInstance: ethers.Signer) => {
     if (!walletAddress) return;
+    
+    try {
+      const provider = signerInstance.provider;
+      if (provider) {
+        const net = await provider.getNetwork();
+        setChainId(net.chainId.toString());
+      }
+    } catch (err) {
+      console.warn("Failed to get chainId during sync:", err);
+    }
     
     // Search if any user in localStorage is linked to this walletAddress
     let foundUser: string | null = null;
@@ -608,6 +662,7 @@ export function Dashboard() {
         onLogout={handleLogout}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
+        chainId={chainId}
       />
       
       <main className="mx-auto max-w-[1500px] space-y-5 px-5 pb-10 pt-6">
@@ -806,7 +861,8 @@ function Navbar({
   currentUser,
   onLogout,
   activeTab,
-  setActiveTab
+  setActiveTab,
+  chainId
 }: { 
   account: string | null; 
   balanceGC: string; 
@@ -816,6 +872,7 @@ function Navbar({
   onLogout: () => void;
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  chainId: string | null;
 }) {
   return (
     <header className="sticky top-0 z-30 border-b border-white/5 backdrop-blur-xl bg-background/60">
@@ -876,6 +933,33 @@ function Navbar({
               <span className="font-semibold">{balanceGC}</span>
               <span className="text-muted-foreground">GRN</span>
             </div>
+          )}
+          
+          {account && chainId && (
+            chainId === "80002" ? (
+              <div className="hidden lg:flex items-center gap-1.5 bg-green-500/10 border border-green-500/20 text-green-400 px-3 py-2 rounded-xl text-xs font-semibold">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500"></span>
+                </span>
+                <span>Amoy Connected</span>
+              </div>
+            ) : (
+              <button
+                onClick={async () => {
+                  try {
+                    await switchChainToPolygonAmoy();
+                  } catch (err: any) {
+                    toast.error(err.message || "Failed to switch chain");
+                  }
+                }}
+                className="flex items-center gap-1.5 bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer animate-pulse shrink-0"
+                title="Click to switch MetaMask to Polygon Amoy Testnet"
+              >
+                <CircleDot className="h-3.5 w-3.5 text-red-500" />
+                <span>Wrong Network (Switch)</span>
+              </button>
+            )
           )}
           
           {account ? (
@@ -1811,33 +1895,56 @@ function ActiveListings({
                     <td className="py-4 px-4 text-right">
                       {l.isActive && !l.isMatched && (
                         <Button
-                          disabled={processingId === l.id || isSeller || walletMismatch}
+                          disabled={processingId !== null || isSeller || walletMismatch}
                           onClick={() => handleBuy(l.id, totalCost)}
                           size="sm"
-                          className="bg-glow-cyan/10 hover:bg-glow-cyan/20 text-glow-cyan text-[10px] font-semibold uppercase px-3 py-1 rounded-lg border border-[var(--neon-cyan)]/20"
+                          className="bg-glow-cyan/10 hover:bg-glow-cyan/20 text-glow-cyan text-[10px] font-semibold uppercase px-3 py-1 rounded-lg border border-[var(--neon-cyan)]/20 flex items-center gap-1.5 ml-auto"
                         >
-                          {isSeller ? "Your Listing" : "Buy Offer"}
+                          {processingId === l.id ? (
+                            <>
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                              Buying...
+                            </>
+                          ) : isSeller ? (
+                            "Your Listing"
+                          ) : (
+                            "Buy Offer"
+                          )}
                         </Button>
                       )}
 
                       {l.isMatched && !l.isSettled && (
-                        <div className="flex gap-1 justify-end">
+                        <div className="flex gap-1.5 justify-end">
                           <Button
-                            disabled={processingId === l.id || walletMismatch}
+                            disabled={processingId !== null || walletMismatch}
                             onClick={() => handleSettle(l.id)}
                             size="sm"
-                            className="bg-[var(--neon-green)] text-background hover:bg-[var(--neon-green)]/90 text-[10px] font-bold uppercase px-3 py-1 rounded-lg shadow-[var(--shadow-neon)]"
+                            className="bg-[var(--neon-green)] text-background hover:bg-[var(--neon-green)]/90 text-[10px] font-bold uppercase px-3 py-1 rounded-lg shadow-[var(--shadow-neon)] flex items-center gap-1"
                           >
-                            Simulate Delivery
+                            {processingId === l.id ? (
+                              <>
+                                <RefreshCw className="h-3 w-3 animate-spin text-background" />
+                                Settling...
+                              </>
+                            ) : (
+                              "Simulate Delivery"
+                            )}
                           </Button>
                           <Button
-                            disabled={processingId === l.id || walletMismatch}
+                            disabled={processingId !== null || walletMismatch}
                             onClick={() => handleAbort(l.id)}
                             variant="destructive"
                             size="sm"
-                            className="text-[10px] font-semibold uppercase px-2 py-1 rounded-lg"
+                            className="text-[10px] font-semibold uppercase px-2 py-1 rounded-lg flex items-center gap-1"
                           >
-                            Abort
+                            {processingId === l.id ? (
+                              <>
+                                <RefreshCw className="h-3 w-3 animate-spin" />
+                                Aborting...
+                              </>
+                            ) : (
+                              "Abort"
+                            )}
                           </Button>
                         </div>
                       )}
