@@ -42,6 +42,7 @@ import {
   Listing,
   GREEN_COIN_ADDRESS,
   ENERGY_TRADING_ADDRESS,
+  BACKEND_URL,
   switchChainToPolygonAmoy
 } from "../../lib/web3";
 
@@ -611,7 +612,7 @@ export function Dashboard({
   // Ping backend to check if Oracle is running
   const checkBackendOracle = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/");
+      const res = await fetch(`${BACKEND_URL}/`);
       if (res.ok) {
         setOracleStatus(true);
       } else {
@@ -1030,20 +1031,21 @@ function Navbar({
               </button>
             )
           )}
-          
           {account ? (
             <button 
               onClick={onSwitchWallet}
-              className="flex items-center gap-2 glass-panel px-3 py-2 text-xs transition duration-200 hover:bg-white/5 active:scale-95 group relative cursor-pointer"
+              className="flex items-center gap-1.5 glass-panel px-2.5 py-2 text-xs transition duration-200 hover:bg-white/5 active:scale-95 group relative cursor-pointer"
               title="Click to switch MetaMask account"
             >
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--neon-green)] opacity-70"></span>
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--neon-green)]"></span>
               </span>
-              <Wallet className="h-4 w-4 text-glow-cyan group-hover:text-[var(--neon-green)] transition-colors" strokeWidth={2.5} />
-              <span className="font-[JetBrains_Mono] group-hover:text-[var(--neon-green)] transition-colors">{truncateAddress(account)}</span>
-              <span className="ml-1 text-[9px] uppercase tracking-wider text-muted-foreground group-hover:text-foreground transition-colors">(Switch)</span>
+              <img 
+                src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" 
+                className="h-5 w-5 object-contain" 
+                alt="MetaMask Logo" 
+              />
             </button>
           ) : (
             <Button 
