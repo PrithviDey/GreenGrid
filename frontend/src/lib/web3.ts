@@ -128,14 +128,14 @@ export async function getListingsFromChain(): Promise<Listing[]> {
       if (info[0] !== 0n) {
         listings.push({
           id: Number(info[0]),
-          seller: info[1],
-          amount: ethers.formatEther(info[2]),
-          pricePerToken: ethers.formatEther(info[3]),
-          buyer: info[4],
-          matchedAt: Number(info[5]),
-          isActive: info[6],
-          isMatched: info[7],
-          isSettled: info[8]
+          amount: ethers.formatEther(info[1]),
+          pricePerToken: ethers.formatEther(info[2]),
+          seller: info[3],
+          isActive: info[4],
+          isMatched: info[5],
+          isSettled: info[6],
+          buyer: info[7],
+          matchedAt: Number(info[8])
         });
       }
     }
