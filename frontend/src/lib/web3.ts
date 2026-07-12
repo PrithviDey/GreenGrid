@@ -231,8 +231,8 @@ export async function buyEnergyListing(signer: ethers.Signer, listingId: number,
   } else {
     // On-chain listing: Fetch parameters from the contract to match expected Wei exactly
     const info = await contract.listings(BigInt(listingId));
-    const amount = info[2];          // uint256 amount
-    const pricePerToken = info[3];   // uint256 pricePerToken
+    const amount = info[1];          // uint256 amount
+    const pricePerToken = info[2];   // uint256 pricePerToken
     
     // Solidity math: (amount * pricePerToken) / 10^18
     valueWei = (amount * pricePerToken) / 10n**18n;
