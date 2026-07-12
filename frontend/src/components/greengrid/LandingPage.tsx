@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
+import { ethers } from "ethers";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { 
   Leaf, 
   Zap, 
   ShieldCheck, 
   Lock, 
-  User, 
+  Wallet, 
   AlertCircle, 
   Activity, 
   ArrowRight, 
@@ -14,7 +14,11 @@ import {
   Award, 
   CheckCircle2, 
   X,
-  RefreshCw
+  RefreshCw,
+  Copy,
+  Eye,
+  EyeOff,
+  Sparkles
 } from "lucide-react";
 import { toast } from "sonner";
 import { EnergyBackground } from "./EnergyBackground";
@@ -26,18 +30,18 @@ export function LandingPage({
 }) {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
-  
-  // Login fields
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  
-  // Signup fields
-  const [signupUser, setSignupUser] = useState("");
-  const [signupEmail, setSignupEmail] = useState("");
-  const [signupPass, setSignupPass] = useState("");
-  const [signupConfirm, setSignupConfirm] = useState("");
+
+  // Signup role selection
   const [role, setRole] = useState<"seller" | "buyer">("seller");
-  
+
+  // Generated embedded wallet state (shown on signup)
+  const [generatedWallet, setGeneratedWallet] = useState<{
+    address: string;
+    privateKey: string;
+    mnemonic: string;
+  } | null>(null);
+  const [showPrivKey, setShowPrivKey] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
 
@@ -61,57 +65,95 @@ export function LandingPage({
     }
   };
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!username || !password) {
-      toast.error("Please enter both User ID and Password");
+  // ── Login: Connect existing MetaMask wallet ──────────────────────────────
+  const handleMetaMaskLogin = async () => {
+    if (!window.ethereum) {
+      toast.error("MetaMask is not installed. Please install it from metamask.io");
       return;
     }
-
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      const cleanUser = username.trim().toLowerCase();
-      
-      if (
-        (cleanUser === "seller_pro" || cleanUser === "buyer_eco") && 
-        password === "password123"
-      ) {
-        onEnterApp(cleanUser);
-        toast.success(`Access Granted: Welcome back, ${cleanUser}!`);
-      } else {
-        // Allow dynamic login as long as password is correct for testing flexibility
-        if (password === "password123") {
-          onEnterApp(cleanUser);
-          toast.success(`Success: Created and logged in as dynamic user "${cleanUser}"!`);
-        } else {
-          toast.error("Invalid password. Use 'password123' for demo login.");
-        }
+    try {
+      const accounts: string[] = await window.ethereum.request({ method: "eth_requestAccounts" });
+      if (!accounts || accounts.length === 0) {
+        toast.error("No accounts found. Please unlock MetaMask and try again.");
+        return;
       }
-    }, 800);
+      const address = accounts[0].toLowerCase();
+      // Persist the wallet address as the session identity
+      localStorage.setItem("greengrid_user", address);
+      // Check if there's a saved role; default to buyer
+      if (!localStorage.getItem(`greengrid_role_${address}`)) {
+        localStorage.setItem(`greengrid_role_${address}`, "buyer");
+      }
+      // Also link this wallet to the address-based user profile
+      localStorage.setItem(`greengrid_wallet_${address}`, address);
+      toast.success(`Connected: ${address.slice(0, 6)}...${address.slice(-4)}`);
+      onEnterApp(address);
+    } catch (err: any) {
+      toast.error(err.message || "MetaMask connection rejected.");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleSignupSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!signupUser || !signupEmail || !signupPass || !signupConfirm) {
-      toast.error("Please fill in all signup details");
+  // ── Signup Option A: Connect new/existing MetaMask account ────────────────
+  const handleMetaMaskSignup = async () => {
+    if (!window.ethereum) {
+      toast.error("MetaMask is not installed. Please install it from metamask.io");
       return;
     }
-    if (signupPass !== signupConfirm) {
-      toast.error("Passwords do not match");
-      return;
-    }
-
     setLoading(true);
-    setTimeout(() => {
+    try {
+      // Force MetaMask to show account selection dialog
+      await window.ethereum.request({
+        method: "wallet_requestPermissions",
+        params: [{ eth_accounts: {} }],
+      });
+      const accounts: string[] = await window.ethereum.request({ method: "eth_accounts" });
+      if (!accounts || accounts.length === 0) {
+        toast.error("No accounts found.");
+        return;
+      }
+      const address = accounts[0].toLowerCase();
+      localStorage.setItem("greengrid_user", address);
+      localStorage.setItem(`greengrid_role_${address}`, role);
+      localStorage.setItem(`greengrid_wallet_${address}`, address);
+      toast.success(`Registered: ${address.slice(0, 6)}...${address.slice(-4)} as ${role}!`);
+      onEnterApp(address);
+    } catch (err: any) {
+      toast.error(err.message || "MetaMask connection rejected.");
+    } finally {
       setLoading(false);
-      const cleanUser = signupUser.trim().toLowerCase();
-      
-      // Store custom role for simulation
-      localStorage.setItem(`greengrid_role_${cleanUser}`, role);
-      onEnterApp(cleanUser);
-      toast.success(`Account Registered: Welcome to the microgrid, ${cleanUser}!`);
-    }, 1000);
+    }
+  };
+
+  // ── Signup Option B: Generate brand new embedded wallet ───────────────────
+  const handleGenerateWallet = () => {
+    setLoading(true);
+    try {
+      const wallet = ethers.Wallet.createRandom();
+      const address = wallet.address.toLowerCase();
+      const privateKey = wallet.privateKey;
+      const mnemonic = wallet.mnemonic?.phrase || "";
+
+      // Persist embedded wallet credentials to localStorage
+      localStorage.setItem(`greengrid_privkey_${address}`, privateKey);
+      localStorage.setItem(`greengrid_role_${address}`, role);
+      localStorage.setItem(`greengrid_wallet_${address}`, address);
+      localStorage.setItem("greengrid_user", address);
+
+      setGeneratedWallet({ address, privateKey, mnemonic });
+    } catch (err: any) {
+      toast.error("Failed to generate wallet: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEnterWithGeneratedWallet = () => {
+    if (!generatedWallet) return;
+    toast.success(`New wallet active: ${generatedWallet.address.slice(0, 6)}...${generatedWallet.address.slice(-4)}`);
+    onEnterApp(generatedWallet.address);
   };
 
   // Steps for Interactive flow visualizer
@@ -417,186 +459,176 @@ export function LandingPage({
               </p>
             </div>
 
-            {/* Login Mode Form */}
+            {/* Login Mode */}
             {authMode === "login" ? (
-              <form onSubmit={handleLoginSubmit} className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
-                    <User className="h-3 w-3 text-glow-green text-[var(--neon-green)]" /> User ID
-                  </label>
-                  <Input
-                    type="text"
-                    placeholder="e.g. seller_pro"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="bg-white/[0.02] border-white/5 focus:border-[var(--neon-green)]/35 text-foreground h-10 rounded-xl"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
-                    <Lock className="h-3 w-3 text-glow-green text-[var(--neon-green)]" /> Password
-                  </label>
-                  <Input
-                    type="password"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="bg-white/[0.02] border-white/5 focus:border-[var(--neon-green)]/35 text-foreground h-10 rounded-xl"
-                  />
-                </div>
+              <div className="space-y-4">
+                <p className="text-[11px] text-muted-foreground text-center">
+                  Connect your MetaMask wallet to access your energy trading account.
+                </p>
 
                 <Button
-                  type="submit"
+                  onClick={handleMetaMaskLogin}
                   disabled={loading}
-                  className="w-full h-11 border border-[var(--neon-green)]/35 bg-[var(--neon-green)]/10 text-[var(--neon-green)] font-bold tracking-wide hover:bg-[var(--neon-green)]/20 shadow-[0_0_15px_rgba(34,197,94,0.15)] rounded-xl mt-5 transition duration-200 flex items-center justify-center gap-2"
+                  className="w-full h-12 border border-[var(--neon-green)]/35 bg-[var(--neon-green)]/10 text-[var(--neon-green)] font-bold tracking-wide hover:bg-[var(--neon-green)]/20 shadow-[0_0_20px_rgba(34,197,94,0.15)] rounded-xl transition duration-200 flex items-center justify-center gap-2.5"
                 >
                   {loading ? (
                     <RefreshCw className="h-4 w-4 animate-spin" />
                   ) : (
-                    <span>Sign In</span>
+                    <>
+                      <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" className="h-5 w-5" alt="MetaMask" />
+                      <span>Connect with MetaMask</span>
+                    </>
                   )}
                 </Button>
 
-                {/* Switch to Signup */}
-                <div className="text-center text-[11px] text-muted-foreground mt-3">
-                  Don't have an account?{" "}
-                  <button 
+                <div className="flex items-center gap-2 my-2">
+                  <div className="flex-1 h-px bg-white/[0.05]" />
+                  <span className="text-[10px] uppercase tracking-widest text-muted-foreground">or</span>
+                  <div className="flex-1 h-px bg-white/[0.05]" />
+                </div>
+
+                <div className="rounded-xl border border-white/5 bg-white/[0.01] p-3 text-[10px] text-muted-foreground/70 space-y-1.5">
+                  <div className="flex items-center gap-1.5 font-semibold text-foreground/70">
+                    <AlertCircle className="h-3.5 w-3.5 text-yellow-500/80" />
+                    How it works
+                  </div>
+                  <p className="leading-relaxed">Your MetaMask wallet address becomes your GreenGrid identity. No passwords required — your cryptographic keys are the proof of identity.</p>
+                </div>
+
+                <div className="text-center text-[11px] text-muted-foreground mt-1">
+                  New to GreenGrid?{" "}
+                  <button
                     type="button"
-                    onClick={() => setAuthMode("signup")}
+                    onClick={() => { setAuthMode("signup"); setGeneratedWallet(null); }}
                     className="text-[var(--neon-green)] underline hover:text-white transition ml-0.5"
                   >
-                    Register here
+                    Register a wallet
                   </button>
                 </div>
-
-                {/* Test Credentials Hint */}
-                <div className="mt-4 rounded-xl border border-white/5 bg-white/[0.01] p-3 text-[10px] text-muted-foreground/80 space-y-1">
-                  <div className="flex items-center gap-1.5 font-semibold text-foreground/80">
-                    <AlertCircle className="h-3.5 w-3.5 text-glow-cyan" />
-                    Demo Credentials (Amoy Sync):
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 mt-1.5 pt-1.5 border-t border-white/5">
-                    <button 
-                      type="button"
-                      onClick={() => { setUsername("seller_pro"); setPassword("password123"); }}
-                      className="text-left bg-white/[0.02] hover:bg-white/[0.05] p-1.5 rounded border border-white/5 transition"
-                    >
-                      <span className="text-foreground font-semibold block">Seller (Pro):</span>
-                      <span className="block text-[9px] text-muted-foreground">seller_pro / password123</span>
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => { setUsername("buyer_eco"); setPassword("password123"); }}
-                      className="text-left bg-white/[0.02] hover:bg-white/[0.05] p-1.5 rounded border border-white/5 transition"
-                    >
-                      <span className="text-foreground font-semibold block">Buyer (Eco):</span>
-                      <span className="block text-[9px] text-muted-foreground">buyer_eco / password123</span>
-                    </button>
-                  </div>
-                </div>
-              </form>
+              </div>
             ) : (
-              // Signup Mode Form
-              <form onSubmit={handleSignupSubmit} className="space-y-3.5">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
-                    <User className="h-3 w-3 text-glow-green text-[var(--neon-green)]" /> User ID / Username
-                  </label>
-                  <Input
-                    type="text"
-                    placeholder="e.g. green_neighbor"
-                    value={signupUser}
-                    onChange={(e) => setSignupUser(e.target.value)}
-                    className="bg-white/[0.02] border-white/5 focus:border-[var(--neon-green)]/35 text-foreground h-10 rounded-xl"
-                  />
-                </div>
+              // Signup Mode
+              <div className="space-y-4">
+                {!generatedWallet ? (
+                  <>
+                    {/* Role selector */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
+                        <Award className="h-3 w-3 text-[var(--neon-green)]" /> Your Microgrid Role
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setRole("seller")}
+                          className={`h-10 rounded-lg border text-xs font-semibold transition ${
+                            role === "seller"
+                              ? "bg-[var(--neon-green)]/15 border-[var(--neon-green)]/40 text-[var(--neon-green)]"
+                              : "bg-transparent border-white/5 hover:bg-white/[0.02]"
+                          }`}
+                        >
+                          ☀️ Solar Producer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRole("buyer")}
+                          className={`h-10 rounded-lg border text-xs font-semibold transition ${
+                            role === "buyer"
+                              ? "bg-[var(--neon-cyan)]/15 border-[var(--neon-cyan)]/40 text-[var(--neon-cyan)]"
+                              : "bg-transparent border-white/5 hover:bg-white/[0.02]"
+                          }`}
+                        >
+                          ⚡ Grid Consumer
+                        </button>
+                      </div>
+                    </div>
 
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
-                    <Globe className="h-3 w-3 text-glow-green text-[var(--neon-green)]" /> Email Address
-                  </label>
-                  <Input
-                    type="email"
-                    placeholder="e.g. user@greengrid.io"
-                    value={signupEmail}
-                    onChange={(e) => setSignupEmail(e.target.value)}
-                    className="bg-white/[0.02] border-white/5 focus:border-[var(--neon-green)]/35 text-foreground h-10 rounded-xl"
-                  />
-                </div>
+                    {/* Option A: MetaMask */}
+                    <Button
+                      onClick={handleMetaMaskSignup}
+                      disabled={loading}
+                      className="w-full h-11 border border-[var(--neon-green)]/35 bg-[var(--neon-green)]/10 text-[var(--neon-green)] font-bold hover:bg-[var(--neon-green)]/20 rounded-xl transition flex items-center justify-center gap-2.5"
+                    >
+                      {loading ? (
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <>
+                          <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" className="h-5 w-5" alt="MetaMask" />
+                          <span>Register with MetaMask</span>
+                        </>
+                      )}
+                    </Button>
 
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
-                    <Award className="h-3 w-3 text-glow-green text-[var(--neon-green)]" /> Microgrid Role
-                  </label>
-                  <div className="grid grid-cols-2 gap-2 mt-1">
-                    <button
-                      type="button"
-                      onClick={() => setRole("seller")}
-                      className={`h-9 rounded-lg border text-xs font-semibold transition ${
-                        role === "seller" 
-                          ? "bg-[var(--neon-green)]/15 border-[var(--neon-green)]/40 text-[var(--neon-green)]" 
-                          : "bg-transparent border-white/5 hover:bg-white/[0.02]"
-                      }`}
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-px bg-white/[0.05]" />
+                      <span className="text-[10px] uppercase tracking-widest text-muted-foreground">or</span>
+                      <div className="flex-1 h-px bg-white/[0.05]" />
+                    </div>
+
+                    {/* Option B: Generate embedded wallet */}
+                    <Button
+                      onClick={handleGenerateWallet}
+                      disabled={loading}
+                      className="w-full h-11 border border-[var(--neon-cyan)]/30 bg-[var(--neon-cyan)]/5 text-[var(--neon-cyan)] font-bold hover:bg-[var(--neon-cyan)]/15 rounded-xl transition flex items-center justify-center gap-2.5"
                     >
-                      Solar Producer (Seller)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setRole("buyer")}
-                      className={`h-9 rounded-lg border text-xs font-semibold transition ${
-                        role === "buyer" 
-                          ? "bg-[var(--neon-cyan)]/15 border-[var(--neon-cyan)]/40 text-[var(--neon-cyan)]" 
-                          : "bg-transparent border-white/5 hover:bg-white/[0.02]"
-                      }`}
+                      {loading ? (
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4" />
+                          <span>Generate New Wallet</span>
+                        </>
+                      )}
+                    </Button>
+
+                    <p className="text-[9.5px] text-muted-foreground/60 text-center leading-relaxed">
+                      No MetaMask? We'll create a secure Ethereum wallet for you automatically.
+                    </p>
+                  </>
+                ) : (
+                  /* Generated wallet reveal screen */
+                  <div className="space-y-3">
+                    <div className="rounded-xl bg-[var(--neon-green)]/5 border border-[var(--neon-green)]/20 p-3 space-y-2.5">
+                      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--neon-green)]">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Wallet Generated!
+                      </div>
+                      <div>
+                        <div className="text-[9px] uppercase tracking-wider text-muted-foreground mb-0.5">Address</div>
+                        <div className="font-mono text-[10px] text-foreground/90 break-all bg-black/20 rounded p-1.5">{generatedWallet.address}</div>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-0.5">
+                          <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Private Key</div>
+                          <button onClick={() => setShowPrivKey(v => !v)} className="text-muted-foreground hover:text-foreground transition">
+                            {showPrivKey ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                          </button>
+                        </div>
+                        <div className="font-mono text-[10px] text-yellow-400/80 break-all bg-black/20 rounded p-1.5">
+                          {showPrivKey ? generatedWallet.privateKey : "•".repeat(32) + "..."}
+                        </div>
+                      </div>
+                      {generatedWallet.mnemonic && (
+                        <div>
+                          <div className="text-[9px] uppercase tracking-wider text-muted-foreground mb-0.5">Recovery Phrase</div>
+                          <div className="font-mono text-[9px] text-foreground/60 break-words bg-black/20 rounded p-1.5 leading-relaxed">{generatedWallet.mnemonic}</div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-2.5 text-[9.5px] text-yellow-400/80 leading-relaxed">
+                      ⚠️ Save your private key and recovery phrase now. This is the only time they will be shown.
+                    </div>
+                    <Button
+                      onClick={handleEnterWithGeneratedWallet}
+                      className="w-full h-11 border border-[var(--neon-green)]/35 bg-[var(--neon-green)]/10 text-[var(--neon-green)] font-bold hover:bg-[var(--neon-green)]/20 rounded-xl transition flex items-center justify-center gap-2"
                     >
-                      Grid Consumer (Buyer)
-                    </button>
+                      <Wallet className="h-4 w-4" />
+                      Enter GreenGrid
+                    </Button>
                   </div>
-                </div>
+                )}
 
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
-                    <Lock className="h-3 w-3 text-glow-green text-[var(--neon-green)]" /> Password
-                  </label>
-                  <Input
-                    type="password"
-                    placeholder="password123"
-                    value={signupPass}
-                    onChange={(e) => setSignupPass(e.target.value)}
-                    className="bg-white/[0.02] border-white/5 focus:border-[var(--neon-green)]/35 text-foreground h-10 rounded-xl"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
-                    <Lock className="h-3 w-3 text-glow-green text-[var(--neon-green)]" /> Confirm Password
-                  </label>
-                  <Input
-                    type="password"
-                    placeholder="password123"
-                    value={signupConfirm}
-                    onChange={(e) => setSignupConfirm(e.target.value)}
-                    className="bg-white/[0.02] border-white/5 focus:border-[var(--neon-green)]/35 text-foreground h-10 rounded-xl"
-                  />
-                </div>
-
-                <Button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full h-11 border border-[var(--neon-green)]/35 bg-[var(--neon-green)]/10 text-[var(--neon-green)] font-bold tracking-wide hover:bg-[var(--neon-green)]/20 shadow-[0_0_15px_rgba(34,197,94,0.15)] rounded-xl mt-4 transition duration-200 flex items-center justify-center gap-2"
-                >
-                  {loading ? (
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <span>Register Account</span>
-                  )}
-                </Button>
-
-                {/* Switch to Login */}
-                <div className="text-center text-[11px] text-muted-foreground mt-3">
-                  Already have an account?{" "}
-                  <button 
+                <div className="text-center text-[11px] text-muted-foreground">
+                  Already registered?{" "}
+                  <button
                     type="button"
                     onClick={() => setAuthMode("login")}
                     className="text-[var(--neon-green)] underline hover:text-white transition ml-0.5"
@@ -604,7 +636,7 @@ export function LandingPage({
                     Login here
                   </button>
                 </div>
-              </form>
+              </div>
             )}
 
           </div>

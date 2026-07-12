@@ -229,7 +229,47 @@ export function Dashboard({
     }
   }, []);
 
+  // Auto-restore session: reconnect wallet based on login type on dashboard mount
+  useEffect(() => {
+    if (!currentUser) return;
+    const isEthAddress = /^0x[0-9a-f]{40}$/i.test(currentUser);
+    if (!isEthAddress) return; // legacy username-based users, no auto-connect needed
+
+    const savedPrivKey = localStorage.getItem(`greengrid_privkey_${currentUser}`);
+
+    if (savedPrivKey) {
+      // Embedded wallet user: restore signer from stored private key
+      try {
+        const rpcUrl = import.meta.env.VITE_AMOY_RPC_URL || "https://rpc-amoy.polygon.technology/";
+        const provider = new ethers.JsonRpcProvider(rpcUrl);
+        const wallet = new ethers.Wallet(savedPrivKey, provider);
+        setAccount(wallet.address.toLowerCase());
+        setSigner(wallet);
+        provider.getNetwork().then(net => setChainId(net.chainId.toString())).catch(() => {});
+        refreshState(wallet.address.toLowerCase());
+      } catch (e) {
+        console.error("Failed to restore embedded wallet session:", e);
+      }
+    } else if (typeof window !== "undefined" && window.ethereum) {
+      // MetaMask-based address user: try silent reconnect (no popup)
+      window.ethereum.request({ method: "eth_accounts" }).then(async (accounts: string[]) => {
+        if (accounts && accounts.length > 0 && accounts[0].toLowerCase() === currentUser) {
+          try {
+            const wallet = await connectWallet();
+            setAccount(wallet.address);
+            setSigner(wallet.signer);
+            refreshState(wallet.address);
+          } catch (e) {
+            console.warn("Silent MetaMask reconnect failed:", e);
+          }
+        }
+      }).catch(console.warn);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser]);
+
   const netFlow = simGen - simCon;
+
 
   // Helper to synchronize connected wallet with user profiles
   const syncUserWithWallet = async (walletAddress: string, signerInstance: ethers.Signer) => {
