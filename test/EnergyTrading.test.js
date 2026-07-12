@@ -105,7 +105,7 @@ describe("GreenGrid P2P Solar Energy Trading Platform", function () {
       await energyTrading.connect(seller).listEnergy(listAmount, pricePerToken);
       await expect(
         energyTrading.connect(other).cancelListing(1n)
-      ).to.be.revertedWith("Only seller can cancel listing");
+      ).to.be.revertedWithCustomError(energyTrading, "OnlySeller");
     });
 
     it("Should allow a buyer to match/buy energy by depositing MATIC", async function () {
@@ -129,7 +129,7 @@ describe("GreenGrid P2P Solar Energy Trading Platform", function () {
       await energyTrading.connect(seller).listEnergy(listAmount, pricePerToken);
       await expect(
         energyTrading.connect(buyer).buyEnergy(1n, { value: ethers.parseEther("0.5") })
-      ).to.be.revertedWith("Incorrect payment amount");
+      ).to.be.revertedWithCustomError(energyTrading, "EscrowTransferFailed");
     });
 
     it("Should allow Oracle to confirm delivery and settle trade", async function () {
@@ -164,7 +164,7 @@ describe("GreenGrid P2P Solar Energy Trading Platform", function () {
 
       await expect(
         energyTrading.connect(other).confirmDelivery(1n)
-      ).to.be.revertedWith("Caller is not the authorized oracle");
+      ).to.be.revertedWithCustomError(energyTrading, "OnlyOracle");
     });
 
     it("Should allow Oracle to abort trade and refund both parties", async function () {
@@ -194,7 +194,7 @@ describe("GreenGrid P2P Solar Energy Trading Platform", function () {
 
       await expect(
         energyTrading.connect(buyer).abortTrade(1n)
-      ).to.be.revertedWith("Refund timeout not reached yet");
+      ).to.be.revertedWithCustomError(energyTrading, "RefundTimeoutNotReached");
     });
 
     it("Should allow buyer to abort after the 24-hour timeout", async function () {
@@ -234,24 +234,24 @@ describe("GreenGrid P2P Solar Energy Trading Platform", function () {
     it("Should prevent setting Oracle to zero address", async function () {
       await expect(
         energyTrading.connect(owner).setOracleAddress(ethers.ZeroAddress)
-      ).to.be.revertedWith("Invalid Oracle address");
+      ).to.be.revertedWithCustomError(energyTrading, "InvalidAddress");
     });
 
     it("Should prevent listing energy with zero amount or zero price", async function () {
       await expect(
         energyTrading.connect(seller).listEnergy(0, pricePerToken)
-      ).to.be.revertedWith("Amount must be greater than zero");
+      ).to.be.revertedWithCustomError(energyTrading, "ZeroAmount");
 
       await expect(
         energyTrading.connect(seller).listEnergy(listAmount, 0)
-      ).to.be.revertedWith("Price per token must be greater than zero");
+      ).to.be.revertedWithCustomError(energyTrading, "ZeroPrice");
     });
 
     it("Should prevent the seller from buying their own energy listing", async function () {
       await energyTrading.connect(seller).listEnergy(listAmount, pricePerToken);
       await expect(
         energyTrading.connect(seller).buyEnergy(1n, { value: totalCost })
-      ).to.be.revertedWith("Seller cannot buy their own energy");
+      ).to.be.revertedWithCustomError(energyTrading, "SellerCannotBuy");
     });
   });
 });

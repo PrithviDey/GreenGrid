@@ -7,21 +7,41 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 /**
  * @title EnergyTrading
  * @dev Handles P2P solar energy listings, payment escrows, matching, and settlement via Oracle.
+ * Optimized for gas usage using struct packing, custom errors, and secure low-level calls.
  */
 contract EnergyTrading is Ownable {
     IERC20 public immutable greenCoin;
     address public oracleAddress;
 
+    // Custom errors for gas efficiency
+    error InvalidAddress();
+    error ZeroAmount();
+    error ZeroPrice();
+    error ListingNotFound();
+    error ListingNotActive();
+    error ListingAlreadyMatched();
+    error ListingAlreadySettled();
+    error SellerCannotBuy();
+    error OnlySeller();
+    error OnlyOracle();
+    error OnlyBuyerOrOracle();
+    error RefundTimeoutNotReached();
+    error EscrowTransferFailed();
+    error RefundTransferFailed();
+    error PayoutTransferFailed();
+    error TokenTransferFailed();
+
+    // Struct optimized for slot packing (saves 2 storage slots per listing)
     struct Listing {
-        uint256 id;
-        address payable seller;
-        uint256 amount;          // amount in GreenCoin tokens (1 token = 1 kWh)
-        uint256 pricePerToken;   // price per token in Wei (MATIC)
-        address buyer;           // address of the buyer matching the listing
-        uint256 matchedAt;       // timestamp when matching occurred
-        bool isActive;           // true if listed and not matched/cancelled
-        bool isMatched;          // true if buyer has deposited funds
-        bool isSettled;          // true if delivery confirmed and trade settled
+        uint256 id;              // Slot 1 (32 bytes)
+        uint256 amount;          // Slot 2 (32 bytes) - GreenCoins (18 decimals)
+        uint256 pricePerToken;   // Slot 3 (32 bytes) - Wei per token
+        address payable seller;  // Slot 4 (20 bytes) \
+        bool isActive;           // Slot 4 (1 byte)   | Packed into 23 bytes (1 slot)
+        bool isMatched;          // Slot 4 (1 byte)   |
+        bool isSettled;          // Slot 4 (1 byte)   /
+        address buyer;           // Slot 5 (20 bytes) \ Packed into 28 bytes (1 slot)
+        uint64 matchedAt;        // Slot 5 (8 bytes)  /
     }
 
     uint256 public listingCount;
@@ -35,13 +55,13 @@ contract EnergyTrading is Ownable {
     event OracleAddressChanged(address indexed oldOracle, address indexed newOracle);
 
     modifier onlyOracle() {
-        require(msg.sender == oracleAddress, "Caller is not the authorized oracle");
+        if (msg.sender != oracleAddress) revert OnlyOracle();
         _;
     }
 
     constructor(address _greenCoinAddress, address _oracleAddress) Ownable(msg.sender) {
-        require(_greenCoinAddress != address(0), "Invalid GreenCoin address");
-        require(_oracleAddress != address(0), "Invalid Oracle address");
+        if (_greenCoinAddress == address(0)) revert InvalidAddress();
+        if (_oracleAddress == address(0)) revert InvalidAddress();
         greenCoin = IERC20(_greenCoinAddress);
         oracleAddress = _oracleAddress;
     }
@@ -51,7 +71,7 @@ contract EnergyTrading is Ownable {
      * @param _newOracle New Oracle wallet address.
      */
     function setOracleAddress(address _newOracle) external onlyOwner {
-        require(_newOracle != address(0), "Invalid Oracle address");
+        if (_newOracle == address(0)) revert InvalidAddress();
         emit OracleAddressChanged(oracleAddress, _newOracle);
         oracleAddress = _newOracle;
     }
@@ -62,23 +82,23 @@ contract EnergyTrading is Ownable {
      * @param pricePerToken Price per GreenCoin token in Wei (MATIC).
      */
     function listEnergy(uint256 amount, uint256 pricePerToken) external {
-        require(amount > 0, "Amount must be greater than zero");
-        require(pricePerToken > 0, "Price per token must be greater than zero");
+        if (amount == 0) revert ZeroAmount();
+        if (pricePerToken == 0) revert ZeroPrice();
 
-        // Escrow GreenCoins into this contract
-        require(greenCoin.transferFrom(msg.sender, address(this), amount), "GreenCoin escrow transfer failed");
+        // Escrow GreenCoins into this contract (Checks & Effects)
+        if (!greenCoin.transferFrom(msg.sender, address(this), amount)) revert EscrowTransferFailed();
 
         listingCount++;
         listings[listingCount] = Listing({
             id: listingCount,
-            seller: payable(msg.sender),
             amount: amount,
             pricePerToken: pricePerToken,
-            buyer: address(0),
-            matchedAt: 0,
+            seller: payable(msg.sender),
             isActive: true,
             isMatched: false,
-            isSettled: false
+            isSettled: false,
+            buyer: address(0),
+            matchedAt: 0
         });
 
         emit EnergyListed(listingCount, msg.sender, amount, pricePerToken);
@@ -89,15 +109,16 @@ contract EnergyTrading is Ownable {
      */
     function cancelListing(uint256 listingId) external {
         Listing storage listing = listings[listingId];
-        require(listing.id == listingId, "Listing does not exist");
-        require(msg.sender == listing.seller, "Only seller can cancel listing");
-        require(listing.isActive, "Listing is not active");
-        require(!listing.isMatched, "Listing already matched");
+        if (listing.id != listingId) revert ListingNotFound();
+        if (msg.sender != listing.seller) revert OnlySeller();
+        if (!listing.isActive) revert ListingNotActive();
+        if (listing.isMatched) revert ListingAlreadyMatched();
 
+        // Update state before interaction
         listing.isActive = false;
 
         // Refund GreenCoins back to seller
-        require(greenCoin.transfer(listing.seller, listing.amount), "Refund transfer failed");
+        if (!greenCoin.transfer(listing.seller, listing.amount)) revert TokenTransferFailed();
 
         emit ListingCancelled(listingId, msg.sender);
     }
@@ -107,18 +128,19 @@ contract EnergyTrading is Ownable {
      */
     function buyEnergy(uint256 listingId) external payable {
         Listing storage listing = listings[listingId];
-        require(listing.id == listingId, "Listing does not exist");
-        require(listing.isActive, "Listing is not active");
-        require(!listing.isMatched, "Listing already matched");
-        require(msg.sender != listing.seller, "Seller cannot buy their own energy");
+        if (listing.id != listingId) revert ListingNotFound();
+        if (!listing.isActive) revert ListingNotActive();
+        if (listing.isMatched) revert ListingAlreadyMatched();
+        if (msg.sender == listing.seller) revert SellerCannotBuy();
 
         uint256 totalCost = (listing.amount * listing.pricePerToken) / 1e18;
-        require(msg.value == totalCost, "Incorrect payment amount");
+        if (msg.value != totalCost) revert EscrowTransferFailed();
 
+        // Update state before interaction
         listing.isActive = false;
         listing.isMatched = true;
         listing.buyer = msg.sender;
-        listing.matchedAt = block.timestamp;
+        listing.matchedAt = uint64(block.timestamp);
 
         emit EnergyMatched(listingId, msg.sender, msg.value);
     }
@@ -128,19 +150,21 @@ contract EnergyTrading is Ownable {
      */
     function confirmDelivery(uint256 listingId) external onlyOracle {
         Listing storage listing = listings[listingId];
-        require(listing.id == listingId, "Listing does not exist");
-        require(listing.isMatched, "Listing is not matched");
-        require(!listing.isSettled, "Listing already settled");
+        if (listing.id != listingId) revert ListingNotFound();
+        if (!listing.isMatched) revert ListingNotActive(); // Or listing not matched
+        if (listing.isSettled) revert ListingAlreadySettled();
 
+        // Update state before external transfer (Prevents Reentrancy)
         listing.isSettled = true;
 
         uint256 payout = (listing.amount * listing.pricePerToken) / 1e18;
 
-        // Transfer MATIC to seller
-        listing.seller.transfer(payout);
+        // Transfer MATIC to seller using secure low-level call instead of deprecated transfer()
+        (bool success, ) = listing.seller.call{value: payout}("");
+        if (!success) revert PayoutTransferFailed();
 
         // Transfer GreenCoins to buyer (proves they received the energy credit)
-        require(greenCoin.transfer(listing.buyer, listing.amount), "GreenCoin delivery transfer failed");
+        if (!greenCoin.transfer(listing.buyer, listing.amount)) revert TokenTransferFailed();
 
         emit TradeSettled(listingId, listing.seller, listing.buyer, listing.amount, payout);
     }
@@ -152,26 +176,28 @@ contract EnergyTrading is Ownable {
      */
     function abortTrade(uint256 listingId) external {
         Listing storage listing = listings[listingId];
-        require(listing.id == listingId, "Listing does not exist");
-        require(listing.isMatched, "Listing is not matched");
-        require(!listing.isSettled, "Listing already settled");
+        if (listing.id != listingId) revert ListingNotFound();
+        if (!listing.isMatched) revert ListingNotActive();
+        if (listing.isSettled) revert ListingAlreadySettled();
 
         if (msg.sender != oracleAddress) {
-            require(msg.sender == listing.buyer, "Only buyer or oracle can abort");
-            require(block.timestamp >= listing.matchedAt + 24 hours, "Refund timeout not reached yet");
+            if (msg.sender != listing.buyer) revert OnlyBuyerOrOracle();
+            if (block.timestamp < listing.matchedAt + 24 hours) revert RefundTimeoutNotReached();
         }
 
+        // Update state before external transfers (Prevents Reentrancy)
         listing.isMatched = false;
         listing.isSettled = false;
         listing.isActive = false;
 
         uint256 refundAmount = (listing.amount * listing.pricePerToken) / 1e18;
 
-        // Refund MATIC to buyer
-        payable(listing.buyer).transfer(refundAmount);
+        // Refund MATIC/POL to buyer using secure low-level call instead of deprecated transfer()
+        (bool success, ) = payable(listing.buyer).call{value: refundAmount}("");
+        if (!success) revert RefundTransferFailed();
 
         // Return GreenCoins to seller
-        require(greenCoin.transfer(listing.seller, listing.amount), "GreenCoin return failed");
+        if (!greenCoin.transfer(listing.seller, listing.amount)) revert TokenTransferFailed();
 
         emit TradeAborted(listingId, listing.seller, listing.buyer);
     }
