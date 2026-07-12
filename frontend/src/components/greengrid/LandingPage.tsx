@@ -234,7 +234,7 @@ export function LandingPage({
                   onClick={() => { setAuthMode("signup"); setShowAuthModal(true); }}
                   className="h-9 px-4 text-xs font-semibold uppercase tracking-wider bg-[var(--neon-green)]/15 border border-[var(--neon-green)]/35 text-[var(--neon-green)] hover:bg-[var(--neon-green)]/25 transition"
                 >
-                  Join Microgrid
+                  Connect Wallet
                 </Button>
               </>
             ) : (
