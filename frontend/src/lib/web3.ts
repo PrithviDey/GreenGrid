@@ -8,7 +8,7 @@ export const ENERGY_TRADING_ADDRESS = config.energyTradingAddress;
 export const GREEN_COIN_ABI = GreenCoinArtifact.abi;
 export const ENERGY_TRADING_ABI = EnergyTradingArtifact.abi;
 export const RPC_URL = config.rpcUrl;
-export const BACKEND_URL = "http://127.0.0.1:8000";
+export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
 
 // Interface for listings fetched from contract
 export interface Listing {
@@ -170,7 +170,7 @@ async function getGasOverrides(signer: ethers.Signer) {
       return {
         maxFeePerGas: maxFee,
         maxPriorityFeePerGas: maxPriority,
-        gasLimit: 150000 // Explicitly set gasLimit to bypass pre-flight estimateGas check
+        gasLimit: 250000 // Explicitly set gasLimit to bypass pre-flight estimateGas check
       };
     } else {
       let gasPrice = feeData.gasPrice || minGasPrice;
@@ -179,14 +179,14 @@ async function getGasOverrides(signer: ethers.Signer) {
       }
       return { 
         gasPrice,
-        gasLimit: 150000 // Explicitly set gasLimit to bypass pre-flight estimateGas check
+        gasLimit: 250000 // Explicitly set gasLimit to bypass pre-flight estimateGas check
       };
     }
   } catch (e) {
     console.warn("Failed to fetch gas data, using 35 Gwei default override:", e);
     return {
       gasPrice: ethers.parseUnits("35", "gwei"),
-      gasLimit: 150000 // Explicitly set gasLimit to bypass pre-flight estimateGas check
+      gasLimit: 250000 // Explicitly set gasLimit to bypass pre-flight estimateGas check
     };
   }
 }
