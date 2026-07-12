@@ -104,6 +104,7 @@ export function Dashboard() {
     price: string;
     seller: string;
     total: string;
+    txHash?: string;
   } | null>(null);
   
   // User Authentication state
@@ -838,9 +839,20 @@ export function Dashboard() {
                 </div>
               </div>
 
+              {successDetails.txHash && (
+                <a
+                  href={`https://amoy.polygonscan.com/tx/${successDetails.txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3.5 flex items-center justify-center gap-1.5 text-[10px] font-semibold text-[var(--neon-cyan)] hover:text-white underline transition"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" /> View Escrow Deposit on Polygonscan
+                </a>
+              )}
+
               <Button
                 onClick={() => setSuccessDetails(null)}
-                className="mt-5 w-full h-10 text-xs font-semibold bg-[var(--neon-cyan)]/15 border border-[var(--neon-cyan)]/30 hover:bg-[var(--neon-cyan)]/25 text-glow-cyan shadow-[0_0_10px_rgba(34,211,238,0.1)] transition duration-200"
+                className="mt-4 w-full h-10 text-xs font-semibold bg-[var(--neon-cyan)]/15 border border-[var(--neon-cyan)]/30 hover:bg-[var(--neon-cyan)]/25 text-glow-cyan shadow-[0_0_10px_rgba(34,211,238,0.1)] transition duration-200"
               >
                 Awesome!
               </Button>
@@ -1150,7 +1162,7 @@ function QuickTrade({
   signer: ethers.Signer | null; 
   account: string | null;
   suggestedPrice: number; 
-  onSuccess: (details?: { amount: string; price: string; seller: string; total: string }) => void;
+  onSuccess: (details?: { amount: string; price: string; seller: string; total: string; txHash?: string }) => void;
   onConnect: () => void;
   walletMismatch?: boolean;
   listings: Listing[];
@@ -1230,7 +1242,20 @@ function QuickTrade({
       try {
         toast.info("1. Approving GreenCoin token spend in MetaMask...");
         const receipt = await createListing(signer, amount, price);
-        toast.success("✔ Energy listed successfully on the blockchain!");
+        const txHash = receipt.hash || receipt.transactionHash;
+        toast.success(
+          <div>
+            <span>✔ Energy listed successfully on the blockchain! </span>
+            <a 
+              href={`https://amoy.polygonscan.com/tx/${txHash}`} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-glow-green underline font-semibold ml-1 text-xs"
+            >
+              View on Polygonscan
+            </a>
+          </div>
+        );
         onSuccess();
       } catch (err: any) {
         console.error(err);
@@ -1266,13 +1291,27 @@ function QuickTrade({
           });
         } else {
           toast.info("Sending payment deposit to escrow contract via MetaMask...");
-          await buyEnergyListing(signer, selectedListing.id, total);
-          toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
+          const receipt = await buyEnergyListing(signer, selectedListing.id, total);
+          const txHash = receipt.hash || receipt.transactionHash;
+          toast.success(
+            <div>
+              <span>✔ Matched listing & payment successfully escrowed! </span>
+              <a 
+                href={`https://amoy.polygonscan.com/tx/${txHash}`} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-glow-cyan underline font-semibold ml-1 text-xs"
+              >
+                View on Polygonscan
+              </a>
+            </div>
+          );
           onSuccess({
             amount: amt,
             price: prc,
             seller: sel,
-            total: tot
+            total: tot,
+            txHash: txHash
           });
         }
       } catch (err: any) {
@@ -1531,7 +1570,20 @@ function EnvCard({ account, onSuccess }: { account: string | null; onSuccess: ()
     setLoading(true);
     try {
       const res = await mintCreditsViaOracle(account, 50.0);
-      toast.success("✔ Successfully minted 50.0 GRN (kWh) test credits to your wallet via Oracle!");
+      const txHash = res.transactionHash;
+      toast.success(
+        <div>
+          <span>✔ Successfully minted 50.0 GRN (kWh) test credits! </span>
+          <a 
+            href={`https://amoy.polygonscan.com/tx/${txHash}`} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-glow-green underline font-semibold ml-1 text-xs"
+          >
+            View on Polygonscan
+          </a>
+        </div>
+      );
       onSuccess();
     } catch (err: any) {
       toast.error(err.message || "Failed to mint test credits");
@@ -1751,12 +1803,26 @@ function ActiveListings({
 
       toast.info("Sending payment deposit to escrow contract via MetaMask...");
       const receipt = await buyEnergyListing(signer, listingId, totalCostMatic);
-      toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
+      const txHash = receipt.hash || receipt.transactionHash;
+      toast.success(
+        <div>
+          <span>✔ Matched listing & payment successfully escrowed! </span>
+          <a 
+            href={`https://amoy.polygonscan.com/tx/${txHash}`} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-glow-cyan underline font-semibold ml-1 text-xs"
+          >
+            View on Polygonscan
+          </a>
+        </div>
+      );
       onSuccess({
         amount: amountStr,
         price: priceStr,
         seller: sellerStr,
-        total: totalCostMatic
+        total: totalCostMatic,
+        txHash: txHash
       });
     } catch (err: any) {
       toast.error(err.reason || err.message || "Failed to purchase energy");
@@ -1783,7 +1849,20 @@ function ActiveListings({
 
       toast.info("Invoking Backend Oracle API to verify energy delivery...");
       const res = await settleListingViaOracle(listingId);
-      toast.success(`✔ Oracle Verified: ${res.message}`);
+      const txHash = res.transactionHash;
+      toast.success(
+        <div>
+          <span>✔ Oracle Verified: {res.message} </span>
+          <a 
+            href={`https://amoy.polygonscan.com/tx/${txHash}`} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-glow-green underline font-semibold ml-1 text-xs"
+          >
+            View on Polygonscan
+          </a>
+        </div>
+      );
       onSuccess();
     } catch (err: any) {
       toast.error(err.message || "Oracle delivery settlement failed");
@@ -1810,7 +1889,20 @@ function ActiveListings({
 
       toast.info("Invoking Backend Oracle API to cancel trade and trigger refunds...");
       const res = await abortListingViaOracle(listingId);
-      toast.success(`✔ Oracle Aborted: ${res.message}`);
+      const txHash = res.transactionHash;
+      toast.success(
+        <div>
+          <span>✔ Oracle Aborted: {res.message} </span>
+          <a 
+            href={`https://amoy.polygonscan.com/tx/${txHash}`} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-glow-green underline font-semibold ml-1 text-xs"
+          >
+            View on Polygonscan
+          </a>
+        </div>
+      );
       onSuccess();
     } catch (err: any) {
       toast.error(err.message || "Failed to abort trade");

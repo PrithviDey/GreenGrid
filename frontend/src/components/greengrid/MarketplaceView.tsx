@@ -34,7 +34,7 @@ interface MarketplaceViewProps {
   loading: boolean;
   signer: ethers.Signer | null;
   account: string | null;
-  onSuccess: (details?: { amount: string; price: string; seller: string; total: string }) => void;
+  onSuccess: (details?: { amount: string; price: string; seller: string; total: string; txHash?: string }) => void;
   walletMismatch?: boolean;
 }
 
@@ -257,13 +257,27 @@ export function MarketplaceView({
         return;
       }
       toast.info("Sending payment deposit to escrow contract via MetaMask...");
-      await buyEnergyListing(signer, listingId, totalCostMatic);
-      toast.success("✔ Matched listing & payment successfully escrowed! Awaiting physical delivery...");
+      const receipt = await buyEnergyListing(signer, listingId, totalCostMatic);
+      const txHash = receipt.hash || receipt.transactionHash;
+      toast.success(
+        <div>
+          <span>✔ Matched listing & payment successfully escrowed! </span>
+          <a 
+            href={`https://amoy.polygonscan.com/tx/${txHash}`} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-glow-cyan underline font-semibold ml-1 text-xs"
+          >
+            View on Polygonscan
+          </a>
+        </div>
+      );
       onSuccess({
         amount: amountStr,
         price: priceStr,
         seller: sellerStr,
-        total: totalCostMatic
+        total: totalCostMatic,
+        txHash: txHash
       });
     } catch (err: any) {
       toast.error(err.reason || err.message || "Failed to purchase energy");
