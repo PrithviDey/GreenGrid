@@ -94,7 +94,11 @@ function truncateAddress(address: string) {
   return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
 }
 
-export function Dashboard() {
+export function Dashboard({ 
+  onLogoutRedirect 
+}: { 
+  onLogoutRedirect?: () => void 
+}) {
   const [minPrice, setMinPrice] = useState<number[]>([1.8]);
   const [autoTrade, setAutoTrade] = useState(true);
   const [feed, setFeed] = useState<Tx[]>([]);
@@ -114,6 +118,12 @@ export function Dashboard() {
     }
     return null;
   });
+
+  useEffect(() => {
+    if (!currentUser && onLogoutRedirect) {
+      onLogoutRedirect();
+    }
+  }, [currentUser, onLogoutRedirect]);
 
   // Web3 states
   const [account, setAccount] = useState<string | null>(null);
@@ -661,6 +671,7 @@ export function Dashboard() {
         onSwitchWallet={handleSwitchWallet}
         currentUser={currentUser}
         onLogout={handleLogout}
+        onBackToHome={onLogoutRedirect}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         chainId={chainId}
@@ -872,6 +883,7 @@ function Navbar({
   onSwitchWallet,
   currentUser,
   onLogout,
+  onBackToHome,
   activeTab,
   setActiveTab,
   chainId
@@ -882,6 +894,7 @@ function Navbar({
   onSwitchWallet: () => void;
   currentUser: string | null;
   onLogout: () => void;
+  onBackToHome?: () => void;
   activeTab: string;
   setActiveTab: (tab: string) => void;
   chainId: string | null;
@@ -889,7 +902,11 @@ function Navbar({
   return (
     <header className="sticky top-0 z-30 border-b border-white/5 backdrop-blur-xl bg-background/60">
       <div className="mx-auto flex max-w-[1500px] items-center justify-between px-5 py-3">
-        <div className="flex items-center gap-2.5">
+        <div 
+          className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 transition duration-150" 
+          onClick={onBackToHome}
+          title="Back to Landing Page"
+        >
           <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 border border-white/10 overflow-hidden shadow-[0_0_10px_rgba(34,197,94,0.1)]">
             <img src="/favicon.png" className="h-6 w-6 object-contain" alt="GreenGrid Logo" />
           </div>
