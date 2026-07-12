@@ -38,11 +38,55 @@ export function getEnergyTradingContract(providerOrSigner: ethers.Provider | eth
   return new ethers.Contract(ENERGY_TRADING_ADDRESS, ENERGY_TRADING_ABI, providerOrSigner);
 }
 
+// Switch MetaMask network to Polygon Amoy
+export async function switchChainToPolygonAmoy() {
+  if (!window.ethereum) return;
+  
+  const amoyChainId = "0x13882"; // 80002 in hex
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: amoyChainId }],
+    });
+  } catch (switchError: any) {
+    // Error code 4902 indicates that the chain has not been added to MetaMask.
+    if (switchError.code === 4902) {
+      try {
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [
+            {
+              chainId: amoyChainId,
+              chainName: "Polygon Amoy Testnet",
+              rpcUrls: ["https://rpc-amoy.polygon.technology"],
+              nativeCurrency: {
+                name: "POL",
+                symbol: "POL",
+                decimals: 18,
+              },
+              blockExplorerUrls: ["https://amoy.polygonscan.com"],
+            },
+          ],
+        });
+      } catch (addError) {
+        console.error("Failed to add Polygon Amoy chain to MetaMask:", addError);
+        throw addError;
+      }
+    } else {
+      console.error("Failed to switch chain:", switchError);
+      throw switchError;
+    }
+  }
+}
+
 // Connect MetaMask wallet
 export async function connectWallet() {
   if (!window.ethereum) {
     throw new Error("MetaMask is not installed. Please install it to use this app.");
   }
+  
+  // Force MetaMask to use Polygon Amoy testnet
+  await switchChainToPolygonAmoy();
   
   const provider = new ethers.BrowserProvider(window.ethereum);
   const accounts = await provider.send("eth_requestAccounts", []);
