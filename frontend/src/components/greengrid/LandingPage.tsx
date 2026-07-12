@@ -17,6 +17,7 @@ import {
   RefreshCw
 } from "lucide-react";
 import { toast } from "sonner";
+import { EnergyBackground } from "./EnergyBackground";
 
 export function LandingPage({ 
   onEnterApp 
@@ -151,6 +152,7 @@ export function LandingPage({
 
   return (
     <div className="min-h-screen bg-background text-foreground relative overflow-hidden flex flex-col font-sans">
+      <EnergyBackground />
       
       {/* Decorative Glow Elements */}
       <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-[var(--neon-green)]/5 rounded-full blur-[150px] pointer-events-none" />
