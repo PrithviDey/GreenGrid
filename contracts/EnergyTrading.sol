@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 /**
  * @title EnergyTrading
  * @dev Handles P2P solar energy listings, payment escrows, matching, and settlement via Oracle.
- * Optimized for gas usage using struct packing, custom errors, and secure low-level calls.
+ * Optimized heavily for gas usage using slot packing, custom errors, storage pointers, and unchecked arithmetic.
  */
 contract EnergyTrading is Ownable {
     IERC20 public immutable greenCoin;
@@ -17,6 +17,8 @@ contract EnergyTrading is Ownable {
     error InvalidAddress();
     error ZeroAmount();
     error ZeroPrice();
+    error AmountTooLarge();
+    error PriceTooLarge();
     error ListingNotFound();
     error ListingNotActive();
     error ListingAlreadyMatched();
@@ -31,17 +33,17 @@ contract EnergyTrading is Ownable {
     error PayoutTransferFailed();
     error TokenTransferFailed();
 
-    // Struct optimized for slot packing (saves 2 storage slots per listing)
+    // Struct optimized for slot packing (saves 3 storage slots per listing compared to legacy, and 1 compared to v1)
     struct Listing {
         uint256 id;              // Slot 1 (32 bytes)
-        uint256 amount;          // Slot 2 (32 bytes) - GreenCoins (18 decimals)
-        uint256 pricePerToken;   // Slot 3 (32 bytes) - Wei per token
-        address payable seller;  // Slot 4 (20 bytes) \
-        bool isActive;           // Slot 4 (1 byte)   | Packed into 23 bytes (1 slot)
-        bool isMatched;          // Slot 4 (1 byte)   |
-        bool isSettled;          // Slot 4 (1 byte)   /
-        address buyer;           // Slot 5 (20 bytes) \ Packed into 28 bytes (1 slot)
-        uint64 matchedAt;        // Slot 5 (8 bytes)  /
+        uint128 amount;          // Slot 2 (16 bytes) \ Packed together into 32 bytes (1 slot)
+        uint128 pricePerToken;   // Slot 2 (16 bytes) /
+        address payable seller;  // Slot 3 (20 bytes) \
+        bool isActive;           // Slot 3 (1 byte)   | Packed into 23 bytes (1 slot)
+        bool isMatched;          // Slot 3 (1 byte)   |
+        bool isSettled;          // Slot 3 (1 byte)   /
+        address buyer;           // Slot 4 (20 bytes) \ Packed into 28 bytes (1 slot)
+        uint64 matchedAt;        // Slot 4 (8 bytes)  /
     }
 
     uint256 public listingCount;
@@ -85,23 +87,29 @@ contract EnergyTrading is Ownable {
         if (amount == 0) revert ZeroAmount();
         if (pricePerToken == 0) revert ZeroPrice();
 
+        uint128 amt128 = uint128(amount);
+        uint128 price128 = uint128(pricePerToken);
+        if (uint256(amt128) != amount) revert AmountTooLarge();
+        if (uint256(price128) != pricePerToken) revert PriceTooLarge();
+
         // Escrow GreenCoins into this contract (Checks & Effects)
         if (!greenCoin.transferFrom(msg.sender, address(this), amount)) revert EscrowTransferFailed();
 
-        listingCount++;
-        listings[listingCount] = Listing({
-            id: listingCount,
-            amount: amount,
-            pricePerToken: pricePerToken,
-            seller: payable(msg.sender),
-            isActive: true,
-            isMatched: false,
-            isSettled: false,
-            buyer: address(0),
-            matchedAt: 0
-        });
+        uint256 currentId;
+        unchecked {
+            listingCount++;
+            currentId = listingCount;
+        }
 
-        emit EnergyListed(listingCount, msg.sender, amount, pricePerToken);
+        // Write directly using storage pointer references to save initialization gas
+        Listing storage newListing = listings[currentId];
+        newListing.id = currentId;
+        newListing.amount = amt128;
+        newListing.pricePerToken = price128;
+        newListing.seller = payable(msg.sender);
+        newListing.isActive = true;
+
+        emit EnergyListed(currentId, msg.sender, amount, pricePerToken);
     }
 
     /**
@@ -133,7 +141,10 @@ contract EnergyTrading is Ownable {
         if (listing.isMatched) revert ListingAlreadyMatched();
         if (msg.sender == listing.seller) revert SellerCannotBuy();
 
-        uint256 totalCost = (listing.amount * listing.pricePerToken) / 1e18;
+        uint256 totalCost;
+        unchecked {
+            totalCost = (uint256(listing.amount) * uint256(listing.pricePerToken)) / 1e18;
+        }
         if (msg.value != totalCost) revert EscrowTransferFailed();
 
         // Update state before interaction
@@ -151,13 +162,16 @@ contract EnergyTrading is Ownable {
     function confirmDelivery(uint256 listingId) external onlyOracle {
         Listing storage listing = listings[listingId];
         if (listing.id != listingId) revert ListingNotFound();
-        if (!listing.isMatched) revert ListingNotActive(); // Or listing not matched
+        if (!listing.isMatched) revert ListingNotActive();
         if (listing.isSettled) revert ListingAlreadySettled();
 
         // Update state before external transfer (Prevents Reentrancy)
         listing.isSettled = true;
 
-        uint256 payout = (listing.amount * listing.pricePerToken) / 1e18;
+        uint256 payout;
+        unchecked {
+            payout = (uint256(listing.amount) * uint256(listing.pricePerToken)) / 1e18;
+        }
 
         // Transfer MATIC to seller using secure low-level call instead of deprecated transfer()
         (bool success, ) = listing.seller.call{value: payout}("");
@@ -182,7 +196,11 @@ contract EnergyTrading is Ownable {
 
         if (msg.sender != oracleAddress) {
             if (msg.sender != listing.buyer) revert OnlyBuyerOrOracle();
-            if (block.timestamp < listing.matchedAt + 24 hours) revert RefundTimeoutNotReached();
+            bool timeoutReached;
+            unchecked {
+                timeoutReached = (block.timestamp >= uint256(listing.matchedAt) + 24 hours);
+            }
+            if (!timeoutReached) revert RefundTimeoutNotReached();
         }
 
         // Update state before external transfers (Prevents Reentrancy)
@@ -190,7 +208,10 @@ contract EnergyTrading is Ownable {
         listing.isSettled = false;
         listing.isActive = false;
 
-        uint256 refundAmount = (listing.amount * listing.pricePerToken) / 1e18;
+        uint256 refundAmount;
+        unchecked {
+            refundAmount = (uint256(listing.amount) * uint256(listing.pricePerToken)) / 1e18;
+        }
 
         // Refund MATIC/POL to buyer using secure low-level call instead of deprecated transfer()
         (bool success, ) = payable(listing.buyer).call{value: refundAmount}("");
