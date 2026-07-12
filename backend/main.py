@@ -33,8 +33,13 @@ except Exception as e:
     raise RuntimeError(f"Could not load deployment configuration: {e}")
 
 # RPC and Address configs
+from web3.middleware import ExtraDataToPOAMiddleware
+
 RPC_URL = config.get("rpcUrl", "http://127.0.0.1:8545")
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
+
+# Inject POA middleware to support Polygon Amoy's extended block headers
+w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
 if not w3.is_connected():
     print(f"WARNING: Could not connect to Web3 provider at {RPC_URL}")
