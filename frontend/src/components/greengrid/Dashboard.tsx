@@ -1026,9 +1026,22 @@ function QuickTrade({
     }
 
     if (isSell) {
-      if (parseFloat(amount) <= 0 || parseFloat(price) <= 0) {
+      const parsedAmount = parseFloat(amount || "0");
+      const parsedPrice = parseFloat(price || "0");
+      if (isNaN(parsedAmount) || parsedAmount <= 0 || isNaN(parsedPrice) || parsedPrice <= 0) {
         toast.error("Please enter a valid amount and price");
         return;
+      }
+
+      // Check user GreenCoin balance before listing on blockchain
+      try {
+        const userBalance = await getGCBalance(account);
+        if (parseFloat(userBalance) < parsedAmount) {
+          toast.error(`Insufficient GreenCoin (GRN) balance. You have ${parseFloat(userBalance).toFixed(2)} GRN, but tried to list ${parsedAmount} GRN. Go to the Contracts tab to mint credits first!`);
+          return;
+        }
+      } catch (err) {
+        console.warn("Failed to check token balance before listing, proceeding anyway:", err);
       }
       setLoading(true);
       try {

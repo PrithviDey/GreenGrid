@@ -170,9 +170,22 @@ export async function cancelEnergyListing(signer: ethers.Signer, listingId: numb
 // Buyer matches order and deposits MATIC/POL in escrow
 export async function buyEnergyListing(signer: ethers.Signer, listingId: number, totalCostMatic: string) {
   const contract = new ethers.Contract(ENERGY_TRADING_ADDRESS, ENERGY_TRADING_ABI, signer);
-  const valueWei = ethers.parseEther(totalCostMatic);
-  const overrides = await getGasOverrides(signer);
   
+  let valueWei: bigint;
+  if (listingId >= 101) {
+    // Simulated/mock listing: use the totalCostMatic from frontend
+    valueWei = ethers.parseEther(totalCostMatic);
+  } else {
+    // On-chain listing: Fetch parameters from the contract to match expected Wei exactly
+    const info = await contract.listings(BigInt(listingId));
+    const amount = info[2];          // uint256 amount
+    const pricePerToken = info[3];   // uint256 pricePerToken
+    
+    // Solidity math: (amount * pricePerToken) / 10^18
+    valueWei = (amount * pricePerToken) / 10n**18n;
+  }
+  
+  const overrides = await getGasOverrides(signer);
   const tx = await contract.buyEnergy(BigInt(listingId), { ...overrides, value: valueWei });
   const receipt = await tx.wait();
   return receipt;
